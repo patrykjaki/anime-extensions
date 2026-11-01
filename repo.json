@@ -1,0 +1,9 @@
+{
+  "index_v2": "https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.json",
+  "meta": {
+    "name": "Editotsu",
+    "shortName": "Editotsu",
+    "website": "https://github.com/patrykjaki/anime-extensions",
+    "signingKeyFingerprint": "6290c3ad20ff8222c77b1a5871d8884397004e31fb0658d43db78f4f6210f408"
+  }
+}
