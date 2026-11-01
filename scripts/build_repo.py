@@ -25,13 +25,49 @@ SDK = Path(os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") 
 BUILD_TOOLS = max((d for d in (SDK / "build-tools").iterdir() if (d / "aapt").exists()),
                   key=lambda d: [int(x) if x.isdigit() else 0 for x in re.split(r"[.-]", d.name)])
 AAPT = BUILD_TOOLS / "aapt"
-APKSIGNER = BUILD_TOOLS / "apksigner"
+
+
+def _build_tools_key(apksigner: Path):
+    return [int(x) if x.isdigit() else 0 for x in re.split(r"[.-]", apksigner.parent.name)]
+
+
+def find_apksigner() -> Path | None:
+    """apksigner from PATH, else the newest one in the Android SDK build-tools."""
+    if found := shutil.which("apksigner"):
+        return Path(found)
+    candidates = []
+    for env in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if sdk := os.environ.get(env):
+            candidates.extend((Path(sdk) / "build-tools").glob("*/apksigner"))
+    candidates.extend((SDK / "build-tools").glob("*/apksigner"))
+    return max(candidates, key=_build_tools_key, default=None)
 
 
 def signer_sha256(apk: Path) -> str:
-    out = subprocess.check_output([str(APKSIGNER), "verify", "--print-certs", str(apk)],
-                                  stderr=subprocess.DEVNULL).decode()
-    return re.search(r"Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})", out).group(1)
+    apksigner = find_apksigner()
+    if apksigner is None:
+        raise RuntimeError(
+            f"apksigner not found for {apk}; checked PATH, $ANDROID_HOME/build-tools/*/apksigner "
+            f"and $ANDROID_SDK_ROOT/build-tools/*/apksigner"
+        )
+    proc = subprocess.run([str(apksigner), "verify", "--print-certs", str(apk)],
+                          capture_output=True, text=True)
+    out = proc.stdout + proc.stderr
+    # apksigner prints "Signer #1 certificate SHA-256 digest: ..." in older versions and
+    # "Signer (minSdkVersion=..) certificate SHA-256 digest: ..." in newer ones.
+    match = re.search(
+        r"(?:Signer #1 |Signer \([^)]*\) )?certificate SHA-256 digest:\s*([0-9a-fA-F]{64})",
+        out,
+    )
+    if proc.returncode != 0 or match is None:
+        raise RuntimeError(
+            f"could not read the signer certificate from {apk}\n"
+            f"apksigner: {apksigner}\n"
+            f"exit code: {proc.returncode}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
+    return match.group(1).lower()
 
 
 def source_id(name: str, lang: str, version_id: int = 1) -> int:
@@ -46,7 +82,8 @@ def meta(badging: str, key: str):
 
 
 def main():
-    apks = sorted(ROOT.glob("src/*/*/build/outputs/apk/release/*.apk"))
+    apks = sorted(p for p in ROOT.glob("src/*/*/build/outputs/apk/release/*.apk")
+                  if not p.name.endswith("-unsigned.apk"))
     if not apks:
         sys.exit("no release apks; run ./gradlew assembleRelease first")
     if OUT.exists():
