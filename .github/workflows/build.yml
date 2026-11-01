@@ -1,0 +1,124 @@
+# Builds the extensions, signs them with the release key and publishes the repo index to the
+# `repo` branch. Secrets (same names as the editotsu release workflow, but this repo's own key):
+#   KEYSTORE_FILE         base64 of the .p12
+#   KEYSTORE_PASSWORD     store password
+#   KEY_ALIAS             key alias (anime-extensions)
+#   KEY_PASSWORD          key password (same as the store password for PKCS12)
+#   EXPECTED_CERT_DIGEST  SHA-256 of the signing certificate; the build refuses any other signer
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require release-signing secrets (fail closed)
+        env:
+          KS_FILE: ${{ secrets.KEYSTORE_FILE }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          PINNED_DIGEST: ${{ secrets.EXPECTED_CERT_DIGEST }}
+        run: |
+          missing=""
+          [ -z "$KS_FILE" ]       && missing="$missing KEYSTORE_FILE"
+          [ -z "$KS_PASS" ]       && missing="$missing KEYSTORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ]     && missing="$missing KEY_ALIAS"
+          [ -z "$KEY_PASS" ]      && missing="$missing KEY_PASSWORD"
+          [ -z "$PINNED_DIGEST" ] && missing="$missing EXPECTED_CERT_DIGEST"
+          if [ -n "$missing" ]; then
+            echo "::error::Release signing secrets missing:$missing"
+            exit 1
+          fi
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle.kts') }}
+
+      - name: Decode keystore
+        env:
+          KS_FILE_B64: ${{ secrets.KEYSTORE_FILE }}
+        run: printf '%s' "$KS_FILE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+
+      - name: Test and build (release key required)
+        env:
+          EXT_STORE_FILE: ${{ runner.temp }}/release.p12
+          EXT_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          EXT_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          EXT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-configuration-cache -PrequireReleaseKey testDebugUnitTest assembleRelease
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.p12"
+
+      - name: Verify signer
+        env:
+          PINNED_DIGEST: ${{ secrets.EXPECTED_CERT_DIGEST }}
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          expected=$(printf '%s' "$PINNED_DIGEST" | tr -d ': ' | tr 'A-Z' 'a-z')
+          for apk in src/*/*/build/outputs/apk/release/*.apk; do
+            actual=$("$APKSIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$apk is signed by $actual, expected the pinned release key"
+              exit 1
+            fi
+            echo "$apk signer ok"
+          done
+
+      - name: Build repo index
+        run: python3 scripts/build_repo.py repo "https://raw.githubusercontent.com/${{ github.repository }}/repo"
+
+      - name: Publish to the repo branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin repo >/dev/null; then
+            git fetch --depth 1 origin repo
+            git worktree add publish FETCH_HEAD
+            git -C publish checkout -B repo
+          else
+            git worktree add --orphan -b repo publish
+          fi
+          find publish -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R repo/. publish/
+          git -C publish add -A
+          if git -C publish diff --cached --quiet; then
+            echo "repo branch already up to date"
+          else
+            git -C publish commit -m "Publish ${GITHUB_SHA::8}"
+            git -C publish push origin repo
+          fi
