@@ -6,6 +6,7 @@ coroutines = "1.10.2"
 [libraries]
 # aniyomi extensions-lib 16 (Apache-2.0), stubs only; the app provides the real classes.
 aniyomi-lib = { module = "com.github.aniyomiorg:extensions-lib", version = "v16" }
+injekt = { module = "com.github.mihonapp:injekt", version = "91edab2317" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version = "5.5.1" }
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }

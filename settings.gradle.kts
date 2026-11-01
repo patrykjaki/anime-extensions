@@ -12,7 +12,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven(url = "https://jitpack.io") {
-            content { includeGroup("com.github.aniyomiorg") }
+            content {
+                includeGroup("com.github.aniyomiorg")
+                includeGroup("com.github.mihonapp")
+            }
         }
     }
 }

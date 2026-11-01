@@ -65,6 +65,52 @@ object Selection {
         return Pick(c.row, f.index, f.path, f.size, false, extra)
     }
 
+    /**
+     * v1/v2 of one release are one choice. Picks whose names differ only by the revision tag
+     * (v2, REPACK, PROPER) and the CRC are one release: keep the highest revision that has
+     * seeders (unknown counts as alive), else the highest; ties go to more seeders. The same
+     * name reposted (other tracker/uploader) merges the same way. Single files and packs never
+     * merge with each other.
+     */
+    fun dropSuperseded(picks: List<Pick>): List<Pick> {
+        val keys = picks.associateWith(::revisionKey)
+        val keep = picks.groupBy { keys.getValue(it) }.values.mapTo(HashSet()) { g ->
+            val alive = g.filter { (it.row.seeders ?: 1) > 0 }.ifEmpty { g }
+            alive.maxWith(compareBy<Pick>(::revisionOf).thenBy { it.row.seeders ?: -1 })
+        }
+        return picks.filter { it in keep }
+    }
+
+    private fun isPack(p: Pick) = (p.row.numFiles ?: 1) > 1 || p.fileName != null
+
+    private fun names(p: Pick) = listOfNotNull(p.row.torrentName, p.fileName?.substringAfterLast('/'))
+
+    /** 1 for an unrevised release, N for vN, 2 for REPACK/PROPER */
+    fun revisionOf(p: Pick): Int = names(p).maxOf { n ->
+        val m = REVISION.find(n) ?: return@maxOf 1
+        m.groupValues[2].takeIf { it.isNotEmpty() }?.drop(1)?.toInt() ?: 2
+    }
+
+    fun revisionKey(p: Pick): String {
+        val parts = if (isPack(p)) names(p) else listOf(p.row.torrentName)
+        return (if (isPack(p)) "pack|" else "file|") + parts.joinToString("|") { normalizeRelease(it) }
+    }
+
+    fun normalizeRelease(name: String): String = name.lowercase()
+        .replace(MEDIA_EXT, "")
+        .replace(CRC, " ")
+        .replace(REVISION_ATTACHED, "")
+        .replace(REVISION, " ")
+        .replace(SEPARATORS, " ")
+        .trim()
+
+    // same tokens ReleaseTags reads as the revision
+    private val REVISION = Regex("""(?i)(?<![a-z0-9])(repack\d?|proper)(?![a-z0-9])|(?<![a-z])(v[2-9])(?![a-z0-9])""")
+    private val REVISION_ATTACHED = Regex("""(?i)(?<=\d)v[2-9](?![a-z0-9])""")
+    private val CRC = Regex("""(?i)[\[(][0-9a-f]{8}[\])]""")
+    private val MEDIA_EXT = Regex("""(?i)\.(mkv|mp4|avi|m2ts|webm|ts)$""")
+    private val SEPARATORS = Regex("""[\s._\-\[\]()]+""")
+
     /** most seeded first; unknown seeders last */
     fun sort(picks: List<Pick>): List<Pick> = picks.sortedByDescending { it.row.seeders ?: -1 }
 }

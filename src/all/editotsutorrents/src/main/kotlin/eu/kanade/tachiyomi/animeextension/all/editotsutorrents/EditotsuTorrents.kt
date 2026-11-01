@@ -1,5 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.all.editotsutorrents
 
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -18,18 +23,40 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Torrent source for Editotsu. Catalogue = AniList; episodes = ani.zip (anidb ids);
  * releases = feed.animetosho.net (anidb-indexed), Nyaa RSS when that has nothing.
  * Every video carries the editotsu internalData contract (see [VideoData]).
  */
-class EditotsuTorrents : AnimeHttpSource() {
+class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "Editotsu Torrents"
     override val baseUrl = "https://animetosho.net"
     override val lang = "all"
     override val supportsLatest = true
+
+    // ============================== Settings ==============================
+
+    // the app stores this source's settings under "source_<id>"
+    private val preferences: SharedPreferences? by lazy {
+        runCatching { Injekt.get<Application>().getSharedPreferences("source_$id", 0) }.getOrNull()
+    }
+
+    private val showOldRevisions: Boolean
+        get() = preferences?.getBoolean(PREF_OLD_REVISIONS, false) ?: false
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_OLD_REVISIONS
+            title = "Show older versions of a release"
+            summary = "Also list v1 next to v2 (and the original next to a REPACK/PROPER). " +
+                "Off: only the newest version that has seeders."
+            setDefaultValue(false)
+        }.also(screen::addPreference)
+    }
 
     // ============================== Catalogue (AniList) ==============================
 
@@ -144,6 +171,8 @@ class EditotsuTorrents : AnimeHttpSource() {
             picks = resolve(Selection.candidates(nyaaRows, ep), ep)
         }
 
+        // before MediaInfo, so superseded revisions don't use up its fetch cap
+        if (!showOldRevisions) picks = Selection.dropSuperseded(picks)
         picks = withMedia(picks)
 
         // one flat list: the app prefixes every title with its hoster name, which its text parser
@@ -216,6 +245,7 @@ class EditotsuTorrents : AnimeHttpSource() {
         }
 
     companion object {
+        private const val PREF_OLD_REVISIONS = "show_old_revisions"
         private const val ANILIST_URL = "https://graphql.anilist.co"
         private const val ANIZIP_URL = "https://api.ani.zip/mappings"
         private const val TOSHO_FEED = "https://feed.animetosho.net/json"
