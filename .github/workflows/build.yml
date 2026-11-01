@@ -87,15 +87,20 @@ jobs:
         env:
           PINNED_DIGEST: ${{ secrets.EXPECTED_CERT_DIGEST }}
         run: |
+          set -o pipefail
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          echo "apksigner: $APKSIGNER"
           expected=$(printf '%s' "$PINNED_DIGEST" | tr -d ': ' | tr 'A-Z' 'a-z')
           for apk in src/*/*/build/outputs/apk/release/*.apk; do
-            actual=$("$APKSIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-            if [ "$actual" != "$expected" ]; then
-              echo "::error::$apk is signed by $actual, expected the pinned release key"
+            out=$("$APKSIGNER" verify --print-certs "$apk" 2>&1)
+            # "Signer #1 certificate SHA-256 digest: ..." (older) or "Signer (minSdkVersion=..) certificate ..."
+            actual=$(printf '%s\n' "$out" | sed -n 's/^.*certificate SHA-256 digest: *\([0-9a-fA-F]\{64\}\).*$/\1/p' | head -1 | tr 'A-Z' 'a-z')
+            if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+              echo "$out"
+              echo "::error::$apk is signed by '$actual', expected the pinned release key"
               exit 1
             fi
-            echo "$apk signer ok"
+            echo "$apk signer ok ($actual)"
           done
 
       - name: Build repo index
