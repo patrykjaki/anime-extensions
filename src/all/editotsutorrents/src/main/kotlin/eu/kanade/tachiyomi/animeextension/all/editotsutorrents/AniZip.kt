@@ -17,14 +17,21 @@ object AniZip {
 
     data class Mapping(val aid: Int?, val romaji: String?, val english: String?, val episodes: List<Episode>)
 
-    fun parse(body: String): Mapping {
+    /**
+     * [aniListTitles]: romaji/english/synonyms of the AniList entry (title checks and the Nyaa
+     * query). ani.zip's own "x-jat" can be a nickname ("rizero" for Re:ZERO), so the AniList
+     * romaji is preferred for searching.
+     */
+    fun parse(body: String, aniListTitles: List<String?> = emptyList()): Mapping {
         val o = JSONObject(body)
         val maps = o.optJSONObject("mappings")
         val aid = maps?.optIntOrNull("anidb_id")
         val titles = o.optJSONObject("titles")
         val romaji = titles?.optStringOrNull("x-jat")
         val english = titles?.optStringOrNull("en")
-        val query = romaji ?: english ?: ""
+        val zipTitles = titles?.keys()?.asSequence()?.mapNotNull { titles.optStringOrNull(it) }?.toList().orEmpty()
+        val titleKeys = Titles.keys(aniListTitles + zipTitles)
+        val query = aniListTitles.firstOrNull { !it.isNullOrBlank() } ?: english ?: romaji ?: ""
         val eps = o.optJSONObject("episodes")
         val list = if (aid == null || eps == null) {
             emptyList()
@@ -47,6 +54,7 @@ object AniZip {
                             seasonEp = e.optIntOrNull("episodeNumber"),
                             absolute = e.optIntOrNull("absoluteEpisodeNumber"),
                             query = query,
+                            titles = titleKeys,
                         ),
                         title = epTitle?.optStringOrNull("en") ?: epTitle?.optStringOrNull("x-jat"),
                         airDateMillis = parseDate(e.optStringOrNull("airDateUtc") ?: e.optStringOrNull("airdate")),
@@ -88,6 +96,15 @@ object AniListParser {
         val arr = page.optJSONArray("media")
         val media = (0 until (arr?.length() ?: 0)).mapNotNull { arr!!.optJSONObject(it)?.let(::parseMedia) }
         return Page(media, page.optJSONObject("pageInfo")?.optBoolean("hasNextPage", false) ?: false)
+    }
+
+    /** romaji, english, then synonyms of a Media(id) titles query */
+    fun parseTitles(body: String): List<String> {
+        val m = JSONObject(body).optJSONObject("data")?.optJSONObject("Media") ?: return emptyList()
+        val t = m.optJSONObject("title")
+        val syn = m.optJSONArray("synonyms")
+        return listOfNotNull(t?.optStringOrNull("romaji"), t?.optStringOrNull("english")) +
+            (0 until (syn?.length() ?: 0)).mapNotNull { syn!!.optString(it).ifEmpty { null } }
     }
 
     fun parseSingle(body: String): Media? =

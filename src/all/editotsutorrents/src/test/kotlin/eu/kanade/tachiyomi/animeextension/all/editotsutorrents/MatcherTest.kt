@@ -47,6 +47,17 @@ class MatcherTest {
     }
 
     @Test
+    fun explicitSeasonMustMatch() {
+        // ani.zip without a tvdb season: treat the entry as season 1
+        val noSeason = Fixtures.FRIEREN_EP1.copy(season = null, seasonEp = null)
+        assertFalse(EpisodeMatcher.isEpisode("Re ZERO Starting Life in Another World S04E01 1080p BILI WEB-DL-VARYG", noSeason))
+        assertTrue(EpisodeMatcher.contradicts("Show S04E01", noSeason))
+        assertTrue(EpisodeMatcher.isEpisode("Show S01E01 1080p", noSeason))
+        assertTrue(EpisodeMatcher.contradicts("[Erai-raws] Re:Zero kara Hajimeru Isekai Seikatsu 4th Season - 01 [1080p]", Fixtures.FRIEREN_EP1))
+        assertFalse(EpisodeMatcher.mayContain("[Group] Show S04 [1080p]", noSeason))
+    }
+
+    @Test
     fun pickFileFromBatch() {
         val meta = Bencode.parseTorrent(Fixtures.bytes("tosho_687355.torrent"))!!
         val f = EpisodeMatcher.pickFile(meta.files, ep5, rowIsThisEpisode = false)!!

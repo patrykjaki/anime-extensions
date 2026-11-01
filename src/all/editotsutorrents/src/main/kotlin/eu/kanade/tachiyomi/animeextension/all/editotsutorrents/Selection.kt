@@ -24,14 +24,23 @@ object Selection {
             val tagged = ep.eid != null && r.anidbEid == ep.eid
             if (r.anidbEid != null && !tagged) return@mapNotNull null // feed says: another episode
             val names = listOf(r.torrentName, r.title).distinct()
+            // a tag is not enough: the name's own numbers must not say another episode/season
+            if (names.any { EpisodeMatcher.contradicts(it, ep) }) return@mapNotNull null
+            // title-search rows (no anidb aid) must carry this entry's title
+            val requireTitle = r.anidbAid == null
             val isThis = tagged || names.any { EpisodeMatcher.isEpisode(it, ep) }
             val mayContain = !isThis && names.any { EpisodeMatcher.mayContain(it, ep) }
             val anonymousBatch = !isThis && !mayContain && r.anidbAid == ep.aid && (r.numFiles ?: 0) > 1 &&
                 names.all { EpisodeMatcher.numbering(it) == EpisodeMatcher.Numbering.Unknown }
+            val singleFile = r.numFiles == 1 || (r.numFiles == null && r.source == "nyaa" && isThis && !tagged)
+            // single files are judged by their name now; packs by the name of the file picked later
+            if (singleFile || requireTitle) {
+                if (names.any { EpisodeMatcher.rejectReason(it, ep, requireTitle) != null }) {
+                    return@mapNotNull null
+                }
+            }
             when {
-                isThis && r.numFiles == 1 -> Candidate.Direct(r)
-                // nyaa doesn't state file counts; a name that is exactly one episode is nearly always one file
-                isThis && r.numFiles == null && r.source == "nyaa" && !tagged -> Candidate.Direct(r)
+                isThis && singleFile -> Candidate.Direct(r)
                 isThis -> Candidate.NeedsFiles(r, true, 0)
                 mayContain -> Candidate.NeedsFiles(r, false, 1)
                 anonymousBatch -> Candidate.NeedsFiles(r, false, 2)

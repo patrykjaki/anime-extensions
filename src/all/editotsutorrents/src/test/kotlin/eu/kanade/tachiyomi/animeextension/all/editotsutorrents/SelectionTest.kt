@@ -14,8 +14,11 @@ class SelectionTest {
     fun eidFeedForEpisode1() {
         val c = Selection.candidates(eidRows + aidRows, Fixtures.FRIEREN_EP1)
         val direct = c.filterIsInstance<Candidate.Direct>()
-        // 31 single-file rows tagged with eid 271418 in the eid feed (duplicates in the aid feed dropped)
-        assertEquals(31, direct.size)
+        // 31 single-file rows tagged with eid 271418; the two "[Piyoko] ... Marumaru no Mahou (Mini Anime)"
+        // rows are another entry and are dropped by their name
+        assertEquals(29, direct.size)
+        assertTrue(direct.none { it.row.title.contains("Marumaru") })
+        assertTrue(direct.any { it.row.title.startsWith("[Muse] Sousou no Frieren - 01 (720p) [2 Hours Special]") })
         assertTrue(direct.all { it.row.anidbEid == 271418 && it.row.numFiles == 1 })
         // batches tagged with the ep1 eid are kept, but need their file list
         val tagged = c.filterIsInstance<Candidate.NeedsFiles>().filter { it.rowIsThisEpisode }

@@ -12,7 +12,12 @@ data class EpisodeRef(
     val seasonEp: Int?,
     val absolute: Int?,
     val query: String,
+    /** normalized titles of this entry ([Titles.key]); empty = title checks off */
+    val titles: List<String> = emptyList(),
 ) {
+    /** season used for name checks: the tvdb season, or 1 when ani.zip doesn't state one */
+    val effectiveSeason: Int get() = season ?: 1
+
     fun toUrl(): String = buildString {
         append("/ep?aid=").append(aid)
         eid?.let { append("&eid=").append(it) }
@@ -21,6 +26,7 @@ data class EpisodeRef(
         seasonEp?.let { append("&se=").append(it) }
         absolute?.let { append("&abs=").append(it) }
         append("&q=").append(Text.urlEncode(query))
+        if (titles.isNotEmpty()) append("&t=").append(titles.joinToString("."))
     }
 
     companion object {
@@ -37,6 +43,7 @@ data class EpisodeRef(
                 seasonEp = params["se"]?.toIntOrNull(),
                 absolute = params["abs"]?.toIntOrNull(),
                 query = params["q"].orEmpty(),
+                titles = params["t"]?.split('.')?.filter { it.isNotEmpty() }.orEmpty(),
             )
         }
     }

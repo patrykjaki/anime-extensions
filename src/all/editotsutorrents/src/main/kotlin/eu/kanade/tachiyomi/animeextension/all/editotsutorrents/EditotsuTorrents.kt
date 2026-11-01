@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.all.editotsutorrents
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.Hoster.Companion.toHosterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -93,8 +94,13 @@ class EditotsuTorrents : AnimeHttpSource() {
     // ============================== Episodes (ani.zip) ==============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
-        val req = Request.Builder().url("$ANIZIP_URL?anilist_id=${anilistId(anime)}").headers(headers).build()
-        val mapping = client.newCall(req).execute().use { AniZip.parse(it.body.string()) }
+        val id = anilistId(anime)
+        val aniListTitles = runCatching {
+            client.newCall(aniListRequest(TITLES_QUERY, JSONObject().put("id", id))).execute()
+                .use { AniListParser.parseTitles(it.body.string()) }
+        }.getOrElse { listOf(anime.title) }
+        val req = Request.Builder().url("$ANIZIP_URL?anilist_id=$id").headers(headers).build()
+        val mapping = client.newCall(req).execute().use { AniZip.parse(it.body.string(), aniListTitles) }
         if (mapping.aid == null) throw Exception("No AniDB mapping for this AniList entry")
         val now = System.currentTimeMillis()
         mapping.episodes
@@ -138,14 +144,10 @@ class EditotsuTorrents : AnimeHttpSource() {
             picks = resolve(Selection.candidates(nyaaRows, ep), ep)
         }
 
-        Selection.sort(picks)
-            .groupBy { it.row.tracker }
-            .map { (tracker, list) ->
-                Hoster(
-                    hosterName = VideoData.hosterName(tracker),
-                    videoList = list.map { p -> toVideo(p, ep) },
-                )
-            }
+        // one flat list: the app prefixes every title with its hoster name, which its text parser
+        // then took for the release group ("Nyaa" cards). The tracker is in the title's ⚙️ part.
+        val videos = Selection.sort(picks).map { p -> toVideo(p, ep) }
+        if (videos.isEmpty()) emptyList() else videos.toHosterList()
     }
 
     private suspend fun resolve(cands: List<Selection.Candidate>, ep: EpisodeRef): List<Pick> = coroutineScope {
@@ -206,6 +208,7 @@ class EditotsuTorrents : AnimeHttpSource() {
             "query(\$page:Int,\$sort:[MediaSort]){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort){$MEDIA_FIELDS}}}"
         private const val SEARCH_QUERY =
             "query(\$page:Int,\$sort:[MediaSort],\$search:String){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort,search:\$search){$MEDIA_FIELDS}}}"
+        private const val TITLES_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){title{romaji english} synonyms}}"
         private const val DETAILS_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){$MEDIA_FIELDS}}"
     }
 }

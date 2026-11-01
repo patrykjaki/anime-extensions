@@ -73,7 +73,8 @@ class ParserTest {
         assertEquals("Sousou no Frieren", m.romaji)
         assertEquals(28, m.episodes.size)
         val ep5 = m.episodes.first { it.ref.anidbEp == 5 }.ref
-        assertEquals(Fixtures.FRIEREN_EP5, ep5)
+        assertEquals(Fixtures.FRIEREN_EP5, ep5.copy(query = Fixtures.FRIEREN_EP5.query, titles = emptyList()))
+        assertTrue(ep5.titles.containsAll(listOf("sousounofrieren", "frierenbeyondjourneysend")))
         assertNotNull(m.episodes.first().airDateMillis)
         assertEquals(ep5, EpisodeRef.fromUrl(ep5.toUrl()))
     }

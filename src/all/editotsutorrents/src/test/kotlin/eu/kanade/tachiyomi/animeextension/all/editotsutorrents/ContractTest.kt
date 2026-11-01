@@ -57,6 +57,21 @@ class ContractTest {
     }
 
     @Test
+    fun titleCarriesWhatTheAppParserReads() {
+        val t = VideoData.title(pick.copy(row = row.copy(numFiles = 28)))
+        val lines = t.lines()
+        assertEquals(row.title, lines[0])
+        assertEquals("S01E05.mkv", lines[1])
+        // the app's regexes (SourceRowClassifier REGEX_SEEDERS / REGEX_SIZE / REGEX_COG_VALUE)
+        assertEquals("42", Regex("""👤\s*(\d+)""").find(t)!!.groupValues[1])
+        assertEquals("321.4 MB", Regex("""💾\s*([\d.]+\s*[KMGT]?B)""", RegexOption.IGNORE_CASE).find(t)!!.groupValues[1])
+        assertEquals("nekoBT", Regex("""⚙️\s*([^|\n]+)""").find(t)!!.groupValues[1].trim())
+        // single-file row: no file line
+        assertEquals(2, VideoData.title(Pick(row.copy(numFiles = 1), 0, null, 1L shl 30, false)).lines().size)
+        assertEquals("1.00 GB", VideoData.sizeText(1L shl 30))
+    }
+
+    @Test
     fun resolution() {
         assertEquals(1080, VideoData.resolution(null, "[SubsPlease] Sousou no Frieren - 05 (1080p)"))
         assertEquals(1080, VideoData.resolution("[Beatrice-Raws] Sousou no Frieren 05 [BDRip 1920x1080 HEVC TrueHD].mkv"))

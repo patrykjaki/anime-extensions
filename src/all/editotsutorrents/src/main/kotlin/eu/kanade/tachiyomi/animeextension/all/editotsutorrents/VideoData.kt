@@ -60,12 +60,34 @@ object VideoData {
         return null
     }
 
-    fun title(p: Pick): String =
+    /**
+     * Video title in the Torrentio layout the app's text parser already reads:
+     *   line 1  release name
+     *   line 2  file name (multi-file torrents only; the parser treats a video-file line as the pack file)
+     *   line 3  "👤 <seeders> 💾 <size> ⚙️ <tracker>" (each part only when known)
+     * internalData carries the same facts structured.
+     */
+    fun title(p: Pick): String = buildString {
+        append(p.row.title.replace('\n', ' ').trim())
         if (p.fileName != null && (p.row.numFiles ?: 1) > 1) {
-            p.row.title + "\n" + p.fileName.substringAfterLast('/')
-        } else {
-            p.row.title
+            append('\n').append(p.fileName.substringAfterLast('/'))
         }
+        val meta = listOfNotNull(
+            p.row.seeders?.let { "👤 $it" },
+            p.sizeBytes?.let { "💾 ${sizeText(it)}" },
+            "⚙️ ${hosterName(p.row.tracker)}",
+        )
+        append('\n').append(meta.joinToString(" "))
+    }
+
+    /** "1.39 GB" / "350.2 MB": binary units with Torrentio's labels (the app's size regex wants [KMGT]B) */
+    fun sizeText(bytes: Long): String {
+        val units = listOf("B" to 1L, "KB" to (1L shl 10), "MB" to (1L shl 20), "GB" to (1L shl 30), "TB" to (1L shl 40))
+        val (unit, div) = units.last { bytes >= it.second || it.second == 1L }
+        if (div == 1L) return "$bytes B"
+        val v = bytes.toDouble() / div
+        return if (v >= 100) "%.1f %s".format(java.util.Locale.ROOT, v, unit) else "%.2f %s".format(java.util.Locale.ROOT, v, unit)
+    }
 
     fun hosterName(tracker: String): String = when (tracker) {
         "nyaa" -> "Nyaa"
