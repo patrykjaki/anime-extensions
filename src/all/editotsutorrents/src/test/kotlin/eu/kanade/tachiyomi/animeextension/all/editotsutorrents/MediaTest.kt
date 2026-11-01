@@ -94,6 +94,19 @@ class MediaTest {
     }
 
     @Test
+    fun sceneGroupBeforeNotes() {
+        fun g(n: String) = ReleaseTags.of(n).group
+        assertEquals("VARYG", g("The Apothecary Diaries S03E01 Locusts 1080p NF WEB-DL AAC2.0 H.264-VARYG (Kusuriya no Hitorigoto 3rd Season, Multi-Subs)"))
+        assertEquals("Tsundere-Raws", g("The Apothecary Diaries S03E01 MULTi 1080p CR WEB-DL AAC2.0 x264-Tsundere-Raws (VF, FR, Multi-Subs)"))
+        assertEquals("GRP", g("Show.S01E01.1080p.WEB.H.264-GRP.mkv"))
+        assertEquals("GRP", g("Show S01E01 1080p WEB x265-GRP[rartv]"))
+        assertNull(g("Show S01E01 1080p WEB-DL"))
+        assertNull(g("Kusuriya no Hitorigoto - 01 (1080p)"))
+        assertNull(g("Show S01E01-E02 1080p"))
+        assertNull(g("Show 01-02v2"))
+    }
+
+    @Test
     fun internalDataCarriesChipData() {
         val row = ToshoParser.parseList(Fixtures.text("tosho_aid17617_p1.json")).first { it.infoHash == "05bd3a45348e1338117e89cf1e25fd76b7a30de3" }
         val fileName = "Frieren (2023)/Frieren - Beyond Journey's End (2023) - S01E05 - Phantoms of the Dead [Bluray-1080p][Opus 2.0][AV1]-BlackRabbit.mkv"

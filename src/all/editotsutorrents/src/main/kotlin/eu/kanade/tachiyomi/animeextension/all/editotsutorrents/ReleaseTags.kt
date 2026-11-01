@@ -53,8 +53,13 @@ data class ReleaseTags(
 
     companion object {
         private val LEADING_GROUP = Regex("""^\s*\[([^\]]{1,40})]""")
-        private val SCENE_GROUP = Regex("""-([A-Za-z0-9]{2,20})(?:\.[a-z0-9]{2,4})?\s*$""")
-        private val NOT_GROUPS = setOf("1080P", "720P", "2160P", "480P", "BATCH", "MULTI", "DUAL", "HEVC", "AV1")
+        private val MEDIA_EXT = Regex("""(?i)\.(?:mkv|mp4|avi|m2ts|webm|ts)$""")
+        /** notes after the scene group: "(Kusuriya no Hitorigoto, Multi-Subs)", "[rartv]" */
+        private val TRAILING_NOTES = Regex("""(?:\s*[\[(][^\[\]()]*[\])])+\s*$""")
+        /** "S01E01-E02", "01-02v2": a range, not a group */
+        private val EPISODE_TOKEN = Regex("""(?i)(?:s\d{1,2})?e?\d{1,4}(?:v\d)?""")
+        private val SCENE_GROUP = Regex("""[A-Za-z0-9][A-Za-z0-9-]{0,29}""")
+        private val NOT_GROUPS = setOf("1080P", "720P", "2160P", "480P", "BATCH", "MULTI", "DUAL", "HEVC", "AV1", "DL", "RIP")
 
         private val SOURCES = listOf(
             "REMUX" to Regex("""(?i)(?<![a-z])remux(?![a-z])"""),
@@ -118,8 +123,17 @@ data class ReleaseTags(
             LEADING_GROUP.find(name)?.groupValues?.get(1)?.trim()?.let { g ->
                 if (g.uppercase(Locale.ROOT) !in NOT_GROUPS && !g.any { it.code > 0x2E7F }) return g
             }
-            // scene style "Show.S01E01.1080p.WEB.x264-GROUP.mkv"
-            return SCENE_GROUP.find(name)?.groupValues?.get(1)?.takeIf { it.uppercase(Locale.ROOT) !in NOT_GROUPS && !it.all(Char::isDigit) }
+            // scene style: "Show.S01E01.1080p.WEB.x264-GROUP.mkv", "... H.264-VARYG (Show, Multi-Subs)",
+            // "... x264-Tsundere-Raws (VF)": the part after the first '-' of the last token
+            val core = name.trim().replace(MEDIA_EXT, "").replace(TRAILING_NOTES, "").trim()
+            val token = core.substringAfterLast(' ').substringAfterLast('.')
+            val dash = token.indexOf('-')
+            if (dash <= 0) return null
+            val g = token.substring(dash + 1).trimEnd('-')
+            return g.takeIf {
+                SCENE_GROUP.matches(it) && it.length >= 2 && it.uppercase(Locale.ROOT) !in NOT_GROUPS &&
+                    !it.all(Char::isDigit) && !EPISODE_TOKEN.matches(it)
+            }
         }
     }
 }
