@@ -1,86 +1,81 @@
-# Editotsu anime extensions
+<div align="center">
 
-Aniyomi-format (extensions-lib 16) extensions for [Editotsu](https://github.com/patrykjaki/editotsu).
-Kept out of the app APK on purpose.
+# Editotsu Extensions
 
-## Extensions
+| Editotsu | Aniyomi | Build |
+|:---:|:---:|:---:|
+| [![Install](https://img.shields.io/badge/Add%20repo-Editotsu-1f8a8a?style=flat)](https://intradeus.github.io/http-protocol-redirector/?r=editotsu://add-repo?type=anime%26url=https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.min.json) | [![Install](https://img.shields.io/badge/Add%20repo-Aniyomi-d32f2f?style=flat)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.min.json) | [![Build](https://github.com/patrykjaki/anime-extensions/actions/workflows/build.yml/badge.svg)](https://github.com/patrykjaki/anime-extensions/actions/workflows/build.yml) |
 
-| Extension | Package | What it does |
-|---|---|---|
-| Editotsu Torrents | `eu.kanade.tachiyomi.animeextension.all.editotsutorrents` | AniList catalogue; episodes from ani.zip (AniDB ids); releases from `feed.animetosho.net` (AniDB-indexed), Nyaa RSS when that returns nothing. Videos are magnets with structured `internalData`. |
+</div>
 
-## Add the repo
+## Install
 
-Editotsu: anime repositories → add `patrykjaki/anime-extensions` (expands to the `repo` branch)
-or `https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.min.json`.
+Tap a button above, or add this URL as an anime extension repo:
 
-Aniyomi (and forks on its current store code): add
-`https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.min.json`
-(it reads `repo.json` next to it and follows `index_v2` to `index.json`). Torrent rows play only
-when the client's torrent server (TorrServer in Aniyomi) is enabled.
+```
+https://raw.githubusercontent.com/patrykjaki/anime-extensions/repo/index.min.json
+```
 
-The repo branch carries three index files: `index.min.json` (legacy list), `index.json` (store
-format) and `repo.json` (legacy meta pointing at `index.json`).
-The `repo` branch holds the output of `scripts/build_repo.py`; not published yet.
+APKs are in the [`repo` branch](https://github.com/patrykjaki/anime-extensions/tree/repo/apk).
+Signing key SHA-256: `6290c3ad20ff8222c77b1a5871d8884397004e31fb0658d43db78f4f6210f408`.
 
-## Build
+## Editotsu Torrents
+
+Anime torrents from public indexers. Catalogue from [AniList](https://anilist.co), episodes
+matched by AniDB id via [ani.zip](https://api.ani.zip).
+
+- Releases are checked against the episode by name as well (season, special editions, split
+  halves, other shows with the same title).
+- Batches resolve to the episode's file inside the torrent.
+- Older versions of a release (v1 next to v2, the original next to a REPACK) are hidden; the
+  setting "Show older versions of a release" lists them.
+- Codec, bit depth, HDR, audio and subtitle tracks come from the indexer's MediaInfo report when
+  it has one, otherwise from the release name.
+
+Playing magnet links needs Editotsu (built-in torrent engine) or Aniyomi with TorrServer. Editotsu
+reads the release data below; other apps show the title, which ends with a seeders/size line.
+
+## Issues
+
+[Open an issue](https://github.com/patrykjaki/anime-extensions/issues) with the show, the episode
+and the release name.
+
+## Development
 
 ```bash
 ./gradlew :src:all:editotsutorrents:testDebugUnitTest :src:all:editotsutorrents:assembleRelease
-python3 scripts/build_repo.py          # -> repo/index.min.json, repo/apk/, repo/icon/
+python3 scripts/build_repo.py   # writes repo/: index.min.json, index.json, repo.json, apk/, icon/
+EDITOTSU_LIVE=1 ./gradlew :src:all:editotsutorrents:testDebugUnitTest --tests '*LiveCheck*' -i   # live services
 ```
 
-Unit tests run on recorded fixtures only. A live check of the same pipeline against the real
-services is opt-in:
+Tests run on recorded responses in `src/all/editotsutorrents/src/test/resources/fixtures`.
+Release signing reads `signing.properties` (git-ignored: `storeFile`, `storePassword`,
+`keyAlias`, `keyPassword`) or `EXT_STORE_FILE`, `EXT_STORE_PASSWORD`, `EXT_KEY_ALIAS`,
+`EXT_KEY_PASSWORD`; without them the debug key is used. CI
+([`build.yml`](.github/workflows/build.yml)) builds with the release key, rejects any other signer
+and publishes `repo/` to the `repo` branch on every push to `main`.
 
-```bash
-EDITOTSU_LIVE=1 ./gradlew :src:all:editotsutorrents:testDebugUnitTest --tests '*LiveCheck*' -i
+### `Video.internalData` (version 1)
+
+Unknown keys are left out. `media.from` is `mediainfo` (the file) or `name` (the release name).
+Languages are BCP-47. The video URL is a magnet link ending in `&index=<fileIdx>`.
+
+```jsonc
+{
+  "editotsu": 1,
+  "infoHash": "05bd3a45…", "fileIdx": 4,
+  "torrentName": "[Group] Show - S01 [BD 1080p]", "fileName": "Show - S01E05.mkv",
+  "sizeBytes": 336967292, "seeders": 42, "leechers": 5, "tracker": "<tracker id>",
+  "anidbEid": 271708, "numFiles": 28, "source": "<indexer id>",
+  "tags":  { "from": "name", "group": "Group", "source": "BD", "service": "CR", "revision": "v2" },
+  "media": { "from": "mediainfo", "codec": "AV1", "bitDepth": 10, "width": 1920, "height": 1080,
+             "audio": [ { "lang": "ja", "codec": "Opus", "channels": 2 } ],
+             "subtitles": [ { "lang": "en", "format": "ASS", "forced": false } ] }
+}
 ```
 
-Signing: `signing.properties` in the repo root (git-ignored):
+## Disclaimer
 
-```
-storeFile=/path/to/anime-extensions.p12
-storePassword=...
-keyAlias=anime-extensions
-keyPassword=...
-```
-
-or the env vars `EXT_STORE_FILE`, `EXT_STORE_PASSWORD`, `EXT_KEY_ALIAS`, `EXT_KEY_PASSWORD`.
-All four or none; with none the local debug key is used, and `-PrequireReleaseKey` makes that an
-error. Release signer SHA-256: `6290c3ad20ff8222c77b1a5871d8884397004e31fb0658d43db78f4f6210f408`.
-An extension update must keep this key.
-
-CI: `.github/workflows/build.yml` tests, builds with the release key, checks the signer against
-`EXPECTED_CERT_DIGEST`, and publishes `repo/` to the `repo` branch on every push to `main`.
-Repository secrets: `KEYSTORE_FILE` (base64 of the .p12), `KEYSTORE_PASSWORD`, `KEY_ALIAS`,
-`KEY_PASSWORD`, `EXPECTED_CERT_DIGEST`.
-
-## internalData contract (Editotsu Torrents)
-
-`Video.internalData` is a JSON object; `Video.resolution` is set when the name states it.
-
-```json
-{"editotsu":1,"infoHash":"<40 hex>","fileIdx":4,"torrentName":"..","fileName":"..",
- "sizeBytes":0,"seeders":0,"leechers":0,"tracker":"nyaa","anidbEid":0}
-```
-
-- Raw facts only, never parsed tags (group, censored, REPACK, codec, audio are parsed in the app).
-- A key whose value is unknown is left out; readers fall back to text parsing for that field.
-  - `fileName`: only when the `.torrent` was read (multi-file torrents). Single-file rows don't have it.
-  - `seadex`: not sent yet (SeaDex annotation is a later step).
-- Extra keys (readers may ignore): `sizeApprox` (Nyaa sizes are rounded), `trusted`, `remake` (Nyaa),
-  `toshoIsSeadex` (animetosho.net's own flag, not best/alt), `anidbAid`, `numFiles`,
-  `source` (`animetosho` | `nyaa`, the feed, not a release tag).
-- `tracker`: `nyaa`, `sukebei`, `nekobt`, `anidex`, `tokyotosho`, `unknown`.
-
-Video URL: `magnet:?xt=urn:btih:<hash>&dn=<name>&tr=..&index=<fileIdx>`, `index` always last
-(Editotsu reads it with `substringAfter("index=")`).
-
-## Third-party code and data
-
-No code is copied from other extension repos. API shapes were read from
-[aniyomiorg/extensions-lib](https://github.com/aniyomiorg/extensions-lib) v16 (Apache-2.0, compile-only
-dependency). `gradlew` and `gradle/wrapper/gradle-wrapper.jar` are Gradle's (Apache-2.0).
-Test fixtures in `src/all/editotsutorrents/src/test/resources/fixtures` are API responses recorded
-on 2026-11-01 from feed.animetosho.net, api.ani.zip, graphql.anilist.co and nyaa.si.
+This repo hosts no media or torrent files; the extension reads public indexers and passes their
+links to the app. Not affiliated with Aniyomi, AniList, AniDB, any indexer or any release group. API stubs from [aniyomiorg/extensions-lib](https://github.com/aniyomiorg/extensions-lib)
+(Apache-2.0, compile-only).
