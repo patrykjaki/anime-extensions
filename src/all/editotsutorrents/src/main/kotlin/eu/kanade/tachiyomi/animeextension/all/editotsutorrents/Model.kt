@@ -76,6 +76,8 @@ data class TorrentRow(
     val remake: Boolean?,
     val timestamp: Long?,
     val source: String,
+    /** animetosho.net listing id (for `json?show=torrent&id=`); null for Nyaa rows */
+    val toshoId: Long? = null,
 )
 
 /** A file inside a torrent; [index] is the position in the info dict file list (libtorrent file index). */
@@ -90,4 +92,6 @@ data class Pick(
     val sizeBytes: Long?,
     val sizeApprox: Boolean,
     val extraTrackersEncoded: List<String> = emptyList(),
+    /** what the file contains, from MediaInfo; null when animetosho has no report for it */
+    val media: Media? = null,
 )

@@ -144,6 +144,8 @@ class EditotsuTorrents : AnimeHttpSource() {
             picks = resolve(Selection.candidates(nyaaRows, ep), ep)
         }
 
+        picks = withMedia(picks)
+
         // one flat list: the app prefixes every title with its hoster name, which its text parser
         // then took for the release group ("Nyaa" cards). The tracker is in the title's ⚙️ part.
         val videos = Selection.sort(picks).map { p -> toVideo(p, ep) }
@@ -164,10 +166,31 @@ class EditotsuTorrents : AnimeHttpSource() {
         direct + fromFiles
     }
 
+    /**
+     * Attach MediaInfo to each pick: animetosho rows by listing id, Nyaa rows by info hash
+     * (animetosho mirrors most of Nyaa). Rows it doesn't have keep media = null and the app
+     * gets the name-derived fields instead. Most-seeded rows first, capped, in parallel.
+     */
+    private suspend fun withMedia(picks: List<Pick>): List<Pick> = coroutineScope {
+        val sorted = Selection.sort(picks)
+        val head = sorted.take(MAX_MEDIA_FETCHES)
+        val shows = head.map { it.row }.distinctBy { it.infoHash }.map { row ->
+            async(Dispatchers.IO) {
+                val url = row.toshoId?.let { "$TOSHO_FEED?show=torrent&id=$it" }
+                    ?: "$TOSHO_FEED?show=torrent&btih=${row.infoHash}"
+                row.infoHash to runCatching { getText(url) }.getOrNull()
+            }
+        }.awaitAll().toMap()
+        head.map { p ->
+            val body = shows[p.row.infoHash] ?: return@map p
+            p.copy(media = runCatching { MediaInfo.fromShow(body, p.fileName) }.getOrNull())
+        } + sorted.drop(MAX_MEDIA_FETCHES)
+    }
+
     private fun toVideo(p: Pick, ep: EpisodeRef) = Video(
         videoUrl = VideoData.magnet(p),
         videoTitle = VideoData.title(p),
-        resolution = VideoData.resolution(p.fileName, p.row.torrentName, p.row.title),
+        resolution = VideoData.resolution(p),
         internalData = VideoData.internalData(p, ep.eid),
         initialized = true,
     )
@@ -199,6 +222,7 @@ class EditotsuTorrents : AnimeHttpSource() {
         private const val NYAA_URL = "https://nyaa.si"
         private const val TOSHO_AID_PAGES = 2
         private const val MAX_TORRENT_FETCHES = 10
+        private const val MAX_MEDIA_FETCHES = 40
         private const val MAX_TORRENT_BYTES = 8L * 1024 * 1024
         private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 

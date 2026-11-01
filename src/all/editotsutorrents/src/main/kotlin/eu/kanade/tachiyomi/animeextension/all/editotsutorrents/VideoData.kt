@@ -42,6 +42,10 @@ object VideoData {
         r.remake?.let { o.put("remake", it) }
         if (r.toshoIsSeadex) o.put("toshoIsSeadex", true)
         o.put("source", r.source)
+        // chip data: what the file contains (MediaInfo), else what the names state
+        val tags = ReleaseTags.of(r.torrentName, p.fileName, r.title)
+        o.put("tags", tags.toJson())
+        (p.media?.toJson() ?: tags.nameMediaJson())?.let { o.put("media", it) }
         return o.toString()
     }
 
@@ -49,7 +53,34 @@ object VideoData {
     private val WXH = Regex("""(?<![0-9])(?:3840|2560|1920|1280|1024|960|854|848|720|640)\s?[x×]\s?(2160|1440|1080|720|576|540|480|360)(?![0-9])""")
     private val UHD = Regex("""(?i)(?<![a-z0-9])(?:4k|uhd)(?![a-z0-9])""")
 
-    /** Video.resolution from the file name, else the torrent name. */
+    /** Video.resolution: the file's real frame size (MediaInfo), else what the names say. */
+    fun resolution(p: Pick): Int? =
+        p.media?.let { m -> classOf(m.width, m.height) } ?: resolution(p.fileName, p.row.torrentName, p.row.title)
+
+    /** 1920x800 (cropped) is still 1080p: classify by width and height */
+    fun classOf(width: Int?, height: Int?): Int? {
+        val byWidth = when {
+            width == null -> null
+            width >= 3800 -> 2160
+            width >= 2500 -> 1440
+            width >= 1900 -> 1080
+            width >= 1270 -> 720
+            width >= 840 -> 480
+            else -> 360
+        }
+        val byHeight = when {
+            height == null -> null
+            height >= 2000 -> 2160
+            height >= 1400 -> 1440
+            height >= 1000 -> 1080
+            height >= 700 -> 720
+            height >= 460 -> 480
+            else -> 360
+        }
+        return listOfNotNull(byWidth, byHeight).maxOrNull()
+    }
+
+    /** resolution stated in a file or torrent name */
     fun resolution(vararg names: String?): Int? {
         for (n in names) {
             if (n == null) continue

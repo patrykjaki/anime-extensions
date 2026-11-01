@@ -37,6 +37,7 @@ object ToshoParser {
             remake = null,
             timestamp = o.optLongOrNull("timestamp"),
             source = "animetosho",
+            toshoId = o.optLongOrNull("id"),
         )
     }
 

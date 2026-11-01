@@ -41,6 +41,12 @@ class LiveCheckTest {
         Selection.sort(picks).take(6).forEach { p ->
             println("  [${p.row.tracker}] s=${p.row.seeders} idx=${p.fileIdx} res=${VideoData.resolution(p.fileName, p.row.torrentName)} ${VideoData.title(p).replace('\n', '|').take(150)}")
         }
+        Selection.sort(picks).take(4).forEach { p ->
+            val url = p.row.toshoId?.let { "https://feed.animetosho.net/json?show=torrent&id=$it" }
+                ?: "https://feed.animetosho.net/json?show=torrent&btih=${p.row.infoHash}"
+            val m = runCatching { MediaInfo.fromShow(String(get(url)), p.fileName) }.getOrNull()
+            println("  media ${p.row.title.take(50)}: " + (m?.let { "${it.codec} ${it.bitDepth}bit ${VideoData.classOf(it.width, it.height)}p hdr=${it.hdr} audio=${it.audio.map { a -> "${a.lang}/${a.codec}/${a.channels}ch" }} subs=${it.subtitles.map { s -> "${s.lang}${if (s.forced) "(forced)" else ""}" }}" } ?: "none"))
+        }
         Selection.sort(picks).firstOrNull()?.let { println("  magnet: " + VideoData.magnet(it).take(160) + " ... " + VideoData.magnet(it).takeLast(12)); println("  data: " + VideoData.internalData(it, ep.eid)) }
     }
 
