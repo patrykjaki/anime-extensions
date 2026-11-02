@@ -91,10 +91,33 @@ object Selection {
         m.groupValues[2].takeIf { it.isNotEmpty() }?.drop(1)?.toInt() ?: 2
     }
 
+    /**
+     * Single files with a known group: one release = same group, episode numbering, resolution,
+     * source, service, codec, bit depth, HDR, audio kind and censorship. Reposts differ in notes
+     * ("(Kusuriya no Hitorigoto, Multi-Subs)" vs "(Multi-Subs)"), the CRC and the revision tag,
+     * none of which is in the key. Rows without a group, and packs, keep the name key.
+     */
     fun revisionKey(p: Pick): String {
-        val parts = if (isPack(p)) names(p) else listOf(p.row.torrentName)
-        return (if (isPack(p)) "pack|" else "file|") + parts.joinToString("|") { normalizeRelease(it) }
+        if (isPack(p)) return "pack|" + names(p).joinToString("|") { normalizeRelease(it) }
+        val name = p.row.torrentName
+        val t = ReleaseTags.of(name)
+        val group = t.group ?: return "file|" + normalizeRelease(name)
+        val res = VideoData.resolution(name)
+        return listOf(
+            "spec", group.lowercase(), episodeToken(name), res?.toString(), t.source, t.service, t.codec,
+            t.bitDepth?.toString(), t.hdr, t.audio, t.censorship,
+        ).joinToString("|") { it.orEmpty() }
     }
+
+    /** "s3e1" for S03E01, "49" for " - 49v2"; "" when the name states neither */
+    fun episodeToken(name: String): String {
+        SXE.find(name)?.let { m -> return "s${m.groupValues[1].toInt()}e${m.groupValues[2].toInt()}" }
+        DASH_EP.find(name)?.let { m -> return m.groupValues[1].toInt().toString() }
+        return ""
+    }
+
+    private val SXE = Regex("""(?i)(?<![a-z0-9])s(\d{1,2})\s?e(\d{1,4})(?![0-9])""")
+    private val DASH_EP = Regex("""\s-\s(\d{1,4})(?:v\d)?(?![0-9a-z])""")
 
     fun normalizeRelease(name: String): String = name.lowercase()
         .replace(MEDIA_EXT, "")

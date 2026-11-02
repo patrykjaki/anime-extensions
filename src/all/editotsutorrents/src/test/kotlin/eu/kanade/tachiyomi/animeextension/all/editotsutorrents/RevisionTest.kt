@@ -63,6 +63,27 @@ class RevisionTest {
     }
 
     @Test
+    fun repostsWithOtherNotesAreOneRelease() {
+        // The Apothecary Diaries S3E1 on 2026-11-01: Nyaa, nekoBT (REPACK) and a third repost
+        val nyaa = single("[ToonsHub] The Apothecary Diaries S03E01 1080p CR WEB-DL AAC2.0 H.264 (Kusuriya no Hitorigoto, Multi-Subs)", 1015)
+        val neko = single("[ToonsHub] The Apothecary Diaries S03E01 REPACK 1080p CR WEB-DL AAC2.0 H.264 (Multi-Subs)", 1143)
+        val third = single("[ToonsHub] Kusuriya no Hitorigoto S03E01 1080p CR WEB-DL AAC2.0 H.264 (Multi-Subs)", 184)
+        assertEquals(listOf(neko.row.torrentName), kept(nyaa, neko, third))
+        // other encodes of the same episode stay
+        val hevc = single("[ToonsHub] The Apothecary Diaries S03E01 1080p CR WEB-DL AAC2.0 HEVC (Multi-Subs)", 50)
+        val p720 = single("[ToonsHub] The Apothecary Diaries S03E01 720p CR WEB-DL AAC2.0 H.264 (Multi-Subs)", 40)
+        val nf = single("[ToonsHub] The Apothecary Diaries S03E01 1080p NF WEB-DL AAC2.0 H.264 (Multi-Subs)", 30)
+        assertEquals(4, kept(nyaa, neko, third, hevc, p720, nf).size)
+    }
+
+    @Test
+    fun mostSeededCopyWhenRevisionsTie() {
+        val a = single("[ToonsHub] Show S01E02 1080p CR WEB-DL AAC2.0 H.264 (Show Alt, Multi-Subs)", 300)
+        val b = single("[ToonsHub] Show S01E02 1080p CR WEB-DL AAC2.0 H.264 (Multi-Subs)", 900)
+        assertEquals(listOf(b.row.torrentName), kept(a, b))
+    }
+
+    @Test
     fun singlesAndPacksNeverMerge() {
         val s = single("[SubsPlease] Oshi no Ko S3 - 03 (1080p) [AAAAAAAA].mkv", 237)
         val p = pack("[SubsPlease] Oshi no Ko S3 (01-11) (1080p) [Batch]", "Oshi no Ko S3 - 03v2 (1080p).mkv", 207)
