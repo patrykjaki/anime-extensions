@@ -19,6 +19,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -37,6 +38,10 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     override val baseUrl = "https://animetosho.net"
     override val lang = "all"
     override val supportsLatest = true
+
+    override val client: OkHttpClient by lazy {
+        network.client.newBuilder().addInterceptor(AniListRetry).build()
+    }
 
     // ============================== Settings ==============================
 
