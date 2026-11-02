@@ -6,7 +6,7 @@ plugins {
 
 // extension identity. versionName = "<lib>.<versionCode>", the format aniyomi-style apps read.
 val extLib = 16
-val extVersionCode = 4
+val extVersionCode = 5
 val extName = "Editotsu Torrents"
 val extClass = ".EditotsuTorrents"
 val pkg = "eu.kanade.tachiyomi.animeextension.all.editotsutorrents"

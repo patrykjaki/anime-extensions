@@ -63,7 +63,8 @@ data class ReleaseTags(
 
         private val SOURCES = listOf(
             "REMUX" to Regex("""(?i)(?<![a-z])remux(?![a-z])"""),
-            "BD" to Regex("""(?i)(?<![a-z])(?:bd(?:rip)?|blu-?ray|bdmv)(?![a-z])"""),
+            // digits excluded on both sides: "[6D4B0BD7]" (a CRC) is not a BD source
+            "BD" to Regex("""(?i)(?<![a-z0-9])(?:bd(?:rip)?|blu-?ray|bdmv)(?![a-z0-9])"""),
             "WEB-DL" to Regex("""(?i)(?<![a-z])web-?dl(?![a-z])"""),
             "WEBRip" to Regex("""(?i)(?<![a-z])web-?rip(?![a-z])"""),
             "WEB" to Regex("""(?i)(?<![a-z])web(?![a-z-])"""),

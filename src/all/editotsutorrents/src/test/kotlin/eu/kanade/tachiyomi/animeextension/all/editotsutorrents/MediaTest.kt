@@ -94,6 +94,13 @@ class MediaTest {
     }
 
     @Test
+    fun crcIsNotASource() {
+        assertEquals("WEB-DL", ReleaseTags.of("[Erai-raws] Kusuriya no Hitorigoto 3rd Season - 05 [1080p CR WEB-DL AVC AAC][MultiSub][6D4B0BD7]").source)
+        assertNull(ReleaseTags.of("[Grp] Show - 05 [1080p][ABD12345]").source)
+        assertEquals("BD", ReleaseTags.of("[Grp] Show - 05 [BD 1080p]").source)
+    }
+
+    @Test
     fun sceneGroupBeforeNotes() {
         fun g(n: String) = ReleaseTags.of(n).group
         assertEquals("VARYG", g("The Apothecary Diaries S03E01 Locusts 1080p NF WEB-DL AAC2.0 H.264-VARYG (Kusuriya no Hitorigoto 3rd Season, Multi-Subs)"))
