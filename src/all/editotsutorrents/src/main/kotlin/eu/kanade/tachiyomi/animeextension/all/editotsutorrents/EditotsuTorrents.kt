@@ -127,15 +127,25 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
         val id = anilistId(anime)
-        val aniListTitles = runCatching {
+        // titles plus airing data (the fallback below needs it); one AniList request
+        val aniListBody = runCatching {
             client.newCall(aniListRequest(TITLES_QUERY, JSONObject().put("id", id))).execute()
-                .use { AniListParser.parseTitles(it.body.string()) }
-        }.getOrElse { listOf(anime.title) }
+                .use { it.body.string() }
+        }.getOrNull()
+        val aniListTitles = aniListBody?.let { runCatching { AniListParser.parseTitles(it) }.getOrNull() }
+            ?.ifEmpty { null } ?: listOf(anime.title)
         val req = Request.Builder().url("$ANIZIP_URL?anilist_id=$id").headers(headers).build()
         val mapping = client.newCall(req).execute().use { AniZip.parse(it.body.string(), aniListTitles) }
-        if (mapping.aid == null) throw Exception("No AniDB mapping for this AniList entry")
+        val episodes = if (mapping.aid != null) {
+            mapping.episodes
+        } else {
+            // no AniDB entry yet: episodes from AniList, releases by title search
+            val query = aniListTitles.firstOrNull { it.isNotBlank() } ?: anime.title
+            NoAniDb.episodes(aniListBody?.let(NoAniDb::airedCount) ?: 0, query, Titles.keys(aniListTitles))
+                .ifEmpty { throw Exception("No AniDB entry and no aired episodes on AniList") }
+        }
         val now = System.currentTimeMillis()
-        mapping.episodes
+        episodes
             .filter { (it.airDateMillis ?: 0L) <= now }
             .sortedByDescending { it.ref.anidbEp }
             .map { e ->
@@ -158,7 +168,8 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> = coroutineScope {
         val ep = EpisodeRef.fromUrl(episode.url) ?: return@coroutineScope emptyList()
 
-        val toshoUrls = buildList {
+        // AnimeTosho is indexed by AniDB ids; without one only the title search below can match
+        val toshoUrls = if (ep.aid == NoAniDb.AID) emptyList() else buildList {
             ep.eid?.let { add("$TOSHO_FEED?eid=$it") }
             for (page in 1..TOSHO_AID_PAGES) add("$TOSHO_FEED?aid=${ep.aid}&page=$page")
         }
@@ -267,7 +278,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
             "query(\$page:Int,\$sort:[MediaSort]){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort){$MEDIA_FIELDS}}}"
         private const val SEARCH_QUERY =
             "query(\$page:Int,\$sort:[MediaSort],\$search:String){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort,search:\$search){$MEDIA_FIELDS}}}"
-        private const val TITLES_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){title{romaji english} synonyms}}"
+        private const val TITLES_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){title{romaji english} synonyms episodes status nextAiringEpisode{episode}}}"
         private const val DETAILS_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){$MEDIA_FIELDS}}"
     }
 }

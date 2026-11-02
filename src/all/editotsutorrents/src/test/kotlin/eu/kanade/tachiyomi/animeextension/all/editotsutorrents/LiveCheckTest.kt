@@ -50,6 +50,30 @@ class LiveCheckTest {
         Selection.sort(picks).firstOrNull()?.let { println("  magnet: " + VideoData.magnet(it).take(160) + " ... " + VideoData.magnet(it).takeLast(12)); println("  data: " + VideoData.internalData(it, ep.eid)) }
     }
 
+    /** No AniDB entry: AniList episode count, Nyaa title search only. Prints counts. */
+    private fun runNoAniDb(anilistId: Int, episode: Int) {
+        val q = "query(\$id:Int){Media(id:\$id,type:ANIME){title{romaji english} synonyms episodes status nextAiringEpisode{episode}}}"
+        val body = org.json.JSONObject().put("query", q).put("variables", org.json.JSONObject().put("id", anilistId)).toString()
+        val c = URI("https://graphql.anilist.co").toURL().openConnection() as HttpURLConnection
+        c.requestMethod = "POST"; c.doOutput = true
+        c.setRequestProperty("Content-Type", "application/json")
+        c.outputStream.use { it.write(body.toByteArray()) }
+        val aniList = c.inputStream.use { String(it.readBytes()) }
+        val titles = AniListParser.parseTitles(aniList)
+        val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles))
+        val ep = eps.first { it.ref.anidbEp == episode }.ref
+        val qs = Text.urlEncode("${ep.query} ${ep.anidbEp.toString().padStart(2, '0')}")
+        val nyaa = NyaaParser.parse(String(get("https://nyaa.si/?page=rss&c=1_0&f=0&q=$qs")))
+        val cands = Selection.candidates(nyaa, ep)
+        println("anilist $anilistId (no anidb): episodes=${eps.size} nyaa rows=${nyaa.size} candidates=${cands.size} direct=${cands.count { it is Selection.Candidate.Direct }}")
+    }
+
+    @Test
+    fun liveNoAniDb() {
+        assumeTrue(System.getenv("EDITOTSU_LIVE") == "1")
+        runNoAniDb(206814, 1) // Dragon Ball Super: Beerus (re-edit, no AniDB entry)
+    }
+
     @Test
     fun live() {
         assumeTrue(System.getenv("EDITOTSU_LIVE") == "1")
