@@ -95,3 +95,32 @@ data class Pick(
     /** what the file contains, from MediaInfo; null when animetosho has no report for it */
     val media: Media? = null,
 )
+
+/**
+ * SAnime.url of this source: "/kitsu/<id>" since 16.9, "/anime/<anilist id>" before.
+ * Entries picked with the old form keep working through AniList and ani.zip's anilist_id.
+ */
+object ShowUrl {
+    sealed class Id {
+        data class Kitsu(val id: Int) : Id()
+        data class AniList(val id: Int) : Id()
+    }
+
+    fun kitsu(id: Int) = "/kitsu/$id"
+    fun aniList(id: Int) = "/anime/$id"
+
+    fun parse(url: String): Id? {
+        val path = url.substringBefore('?').trimEnd('/')
+        val id = path.substringAfterLast('/').toIntOrNull() ?: return null
+        return when (path.substringBeforeLast('/').substringAfterLast('/')) {
+            "kitsu" -> Id.Kitsu(id)
+            "anime" -> Id.AniList(id)
+            else -> null
+        }
+    }
+
+    fun aniZipQuery(id: Id) = when (id) {
+        is Id.Kitsu -> "kitsu_id=${id.id}"
+        is Id.AniList -> "anilist_id=${id.id}"
+    }
+}

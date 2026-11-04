@@ -21,8 +21,8 @@ Signing key SHA-256: `6290c3ad20ff8222c77b1a5871d8884397004e31fb0658d43db78f4f62
 
 ## Editotsu Torrents
 
-Anime torrents from public indexers. Catalogue from [AniList](https://anilist.co), episodes
-matched by AniDB id via [ani.zip](https://api.ani.zip).
+Anime torrents from public indexers. Catalogue from [Kitsu](https://kitsu.app) ([AniList](https://anilist.co)
+when Kitsu is down), episodes matched by AniDB id via [ani.zip](https://api.ani.zip).
 
 - Releases are checked against the episode by name as well (season, special editions, split
   halves, other shows with the same title).
@@ -77,5 +77,5 @@ Languages are BCP-47. The video URL is a magnet link ending in `&index=<fileIdx>
 ## Disclaimer
 
 This repo hosts no media or torrent files; the extension reads public indexers and passes their
-links to the app. Not affiliated with Aniyomi, AniList, AniDB, any indexer or any release group. API stubs from [aniyomiorg/extensions-lib](https://github.com/aniyomiorg/extensions-lib)
+links to the app. Not affiliated with Aniyomi, Kitsu, AniList, AniDB, any indexer or any release group. API stubs from [aniyomiorg/extensions-lib](https://github.com/aniyomiorg/extensions-lib)
 (Apache-2.0, compile-only).

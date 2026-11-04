@@ -28,7 +28,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * Torrent source for Editotsu. Catalogue = AniList; episodes = ani.zip (anidb ids);
+ * Torrent source for Editotsu. Catalogue = Kitsu (AniList when Kitsu fails); episodes = ani.zip (anidb ids);
  * releases = feed.animetosho.net (anidb-indexed), Nyaa RSS when that has nothing.
  * Every video carries the editotsu internalData contract (see [VideoData]).
  */
@@ -63,7 +63,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         }.also(screen::addPreference)
     }
 
-    // ============================== Catalogue (AniList) ==============================
+    // ============================== Catalogue (Kitsu, AniList fallback) ==============================
 
     private fun aniListRequest(query: String, variables: JSONObject): Request {
         val body = JSONObject().put("query", query).put("variables", variables).toString()
@@ -74,11 +74,14 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
     }
 
-    private fun pageRequest(page: Int, sort: String, search: String?): Request {
+    private fun aniListPageRequest(page: Int, sort: String, search: String?): Request {
         val vars = JSONObject().put("page", page).put("sort", sort)
         search?.let { vars.put("search", it) }
         return aniListRequest(if (search == null) PAGE_QUERY else SEARCH_QUERY, vars)
     }
+
+    private fun kitsuRequest(url: String) =
+        Request.Builder().url(url).headers(headers).header("Accept", "application/vnd.api+json").build()
 
     /** AniList body for [key] from [AniListCache], else fetched (paced and retried by [AniListRetry]) and cached */
     private fun aniListBody(key: String, request: Request): String {
@@ -91,32 +94,70 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         return body
     }
 
-    private suspend fun cachedPage(page: Int, sort: String, search: String?): AnimesPage = withContext(Dispatchers.IO) {
-        parsePage(aniListBody(AniListCache.pageKey(sort, page, search), pageRequest(page, sort, search)))
+    /** Kitsu body for [url], cached once [parse] accepts it */
+    private fun <T> kitsu(url: String, parse: (String) -> T): T {
+        KitsuCache.bodies.get(url)?.let { return parse(it) }
+        val body = client.newCall(kitsuRequest(url)).execute().use { r ->
+            if (!r.isSuccessful) throw Exception("Kitsu HTTP ${r.code}")
+            r.body.string()
+        }
+        return parse(body).also { KitsuCache.bodies.put(url, body) }
     }
 
-    override suspend fun getPopularAnime(page: Int) = cachedPage(page, "POPULARITY_DESC", null)
-    override suspend fun getLatestUpdates(page: Int) = cachedPage(page, "TRENDING_DESC", null)
+    /** Kitsu page; AniList only when Kitsu fails (error, timeout, 5xx) */
+    private suspend fun cataloguePage(kitsuUrl: String, sort: String, search: String?): AnimesPage = withContext(Dispatchers.IO) {
+        runCatching { kitsu(kitsuUrl, Kitsu::parsePage) }.getOrNull()?.let { p ->
+            return@withContext AnimesPage(p.media.map(::toSAnime), p.hasNext)
+        }
+        val page = AniListParser.parsePage(aniListBody(AniListCache.pageKey(sort, 1, search), aniListPageRequest(1, sort, search)))
+        // AniList pages don't line up with Kitsu's; the fallback serves one page
+        AnimesPage(page.media.map(::toSAnime), false)
+    }
+
+    override suspend fun getPopularAnime(page: Int) = cataloguePageAt(page, Kitsu.popularUrl(page), "POPULARITY_DESC", null)
+    override suspend fun getLatestUpdates(page: Int) = cataloguePageAt(page, Kitsu.airingUrl(page), "TRENDING_DESC", null)
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList) =
-        cachedPage(page, "SEARCH_MATCH", query.trim())
+        cataloguePageAt(page, Kitsu.searchUrl(page, query.trim()), "SEARCH_MATCH", query.trim())
 
-    override fun popularAnimeRequest(page: Int) = pageRequest(page, "POPULARITY_DESC", null)
-    override fun popularAnimeParse(response: Response) = parsePage(response)
-    override fun latestUpdatesRequest(page: Int) = pageRequest(page, "TRENDING_DESC", null)
-    override fun latestUpdatesParse(response: Response) = parsePage(response)
+    private suspend fun cataloguePageAt(page: Int, kitsuUrl: String, sort: String, search: String?): AnimesPage =
+        if (page == 1) {
+            cataloguePage(kitsuUrl, sort, search)
+        } else {
+            withContext(Dispatchers.IO) {
+                val p = kitsu(kitsuUrl, Kitsu::parsePage)
+                AnimesPage(p.media.map(::toSAnime), p.hasNext)
+            }
+        }
+
+    override fun popularAnimeRequest(page: Int) = kitsuRequest(Kitsu.popularUrl(page))
+    override fun popularAnimeParse(response: Response) = parseKitsuPage(response)
+    override fun latestUpdatesRequest(page: Int) = kitsuRequest(Kitsu.airingUrl(page))
+    override fun latestUpdatesParse(response: Response) = parseKitsuPage(response)
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList) =
-        pageRequest(page, "SEARCH_MATCH", query.trim())
-    override fun searchAnimeParse(response: Response) = parsePage(response)
+        kitsuRequest(Kitsu.searchUrl(page, query.trim()))
+    override fun searchAnimeParse(response: Response) = parseKitsuPage(response)
 
-    private fun parsePage(response: Response): AnimesPage = parsePage(response.use { it.body.string() })
+    private fun parseKitsuPage(response: Response): AnimesPage {
+        val p = Kitsu.parsePage(response.use { it.body.string() })
+        return AnimesPage(p.media.map(::toSAnime), p.hasNext)
+    }
 
-    private fun parsePage(body: String): AnimesPage {
-        val page = AniListParser.parsePage(body)
-        return AnimesPage(page.media.map(::toSAnime), page.hasNext)
+    private fun toSAnime(m: Kitsu.Media) = SAnime.create().apply {
+        url = ShowUrl.kitsu(m.id)
+        title = m.title
+        thumbnail_url = m.cover
+        description = m.description
+        genre = m.genres.joinToString().ifEmpty { null }
+        status = when (m.status) {
+            "current" -> SAnime.ONGOING
+            "finished" -> SAnime.COMPLETED
+            else -> SAnime.UNKNOWN
+        }
+        initialized = true
     }
 
     private fun toSAnime(m: AniListParser.Media) = SAnime.create().apply {
-        url = "/anime/${m.id}"
+        url = ShowUrl.aniList(m.id)
         title = m.title
         thumbnail_url = m.cover
         description = m.description
@@ -132,35 +173,71 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         initialized = true
     }
 
-    private fun anilistId(anime: SAnime): Int =
-        anime.url.substringAfterLast('/').toIntOrNull() ?: error("bad anime url ${anime.url}")
+    private fun showId(anime: SAnime): ShowUrl.Id = ShowUrl.parse(anime.url) ?: error("bad anime url ${anime.url}")
 
-    override fun animeDetailsRequest(anime: SAnime) =
-        aniListRequest(DETAILS_QUERY, JSONObject().put("id", anilistId(anime)))
+    override fun animeDetailsRequest(anime: SAnime) = when (val id = showId(anime)) {
+        is ShowUrl.Id.Kitsu -> kitsuRequest(Kitsu.detailsUrl(id.id))
+        is ShowUrl.Id.AniList -> aniListRequest(DETAILS_QUERY, JSONObject().put("id", id.id))
+    }
+
+    private fun aniListDetails(aniListId: Int): SAnime {
+        val body = aniListBody(AniListCache.mediaKey(aniListId), aniListRequest(DETAILS_QUERY, JSONObject().put("id", aniListId)))
+        return toSAnime(AniListParser.parseSingle(body) ?: error("AniList returned no media"))
+    }
+
+    private fun kitsuMedia(kitsuId: Int): Kitsu.Media =
+        kitsu(Kitsu.detailsUrl(kitsuId)) { Kitsu.parseSingle(it) ?: throw Exception("Kitsu returned no media") }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime = withContext(Dispatchers.IO) {
-        val id = anilistId(anime)
-        val body = aniListBody(AniListCache.mediaKey(id), animeDetailsRequest(anime))
-        toSAnime(AniListParser.parseSingle(body) ?: error("AniList returned no media"))
+        when (val id = showId(anime)) {
+            is ShowUrl.Id.AniList -> aniListDetails(id.id)
+            is ShowUrl.Id.Kitsu -> runCatching { toSAnime(kitsuMedia(id.id)) }.getOrElse { e ->
+                // Kitsu down: AniList has the same show under the id ani.zip maps it to
+                val aniListId = aniZipBody(id)?.let(AniZip::aniListId) ?: throw e
+                aniListDetails(aniListId).apply { url = anime.url }
+            }
+        }
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val m = AniListParser.parseSingle(response.use { it.body.string() }) ?: error("AniList returned no media")
-        return toSAnime(m)
+        val body = response.use { it.body.string() }
+        runCatching { Kitsu.parseSingle(body) }.getOrNull()?.let { return toSAnime(it) }
+        return toSAnime(AniListParser.parseSingle(body) ?: error("no media in the details reply"))
     }
 
-    override fun getAnimeUrl(anime: SAnime) = "https://anilist.co/anime/${anilistId(anime)}"
+    override fun getAnimeUrl(anime: SAnime) = when (val id = showId(anime)) {
+        is ShowUrl.Id.Kitsu -> "https://kitsu.app/anime/${id.id}"
+        is ShowUrl.Id.AniList -> "https://anilist.co/anime/${id.id}"
+    }
 
     // ============================== Episodes (ani.zip) ==============================
 
-    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
-        val id = anilistId(anime)
-        val mediaKey = AniListCache.mediaKey(id)
-        val req = Request.Builder().url("$ANIZIP_URL?anilist_id=$id").headers(headers).build()
-        val aniZipBody = client.newCall(req).execute().use { it.body.string() }
-        val episodes = EpisodeList.build(anime.title, aniZipBody, AniListCache.get(mediaKey)) {
-            runCatching { aniListBody(mediaKey, animeDetailsRequest(anime)) }.getOrNull()
+    /** ani.zip mapping for the entry; null when ani.zip doesn't know it (404) */
+    private fun aniZipBody(id: ShowUrl.Id): String? {
+        val req = Request.Builder().url("$ANIZIP_URL?${ShowUrl.aniZipQuery(id)}").headers(headers).build()
+        return client.newCall(req).execute().use { r ->
+            when {
+                r.isSuccessful -> r.body.string()
+                r.code == 404 -> null
+                else -> throw Exception("ani.zip HTTP ${r.code}")
+            }
         }
+    }
+
+    private val episodeApi = object : EpisodeApi {
+        override fun aniZip(id: ShowUrl.Id) = aniZipBody(id)
+        override fun kitsuMedia(kitsuId: Int) = this@EditotsuTorrents.kitsuMedia(kitsuId)
+        override fun kitsuEpisodes(kitsuId: Int, page: Int) = kitsu(Kitsu.episodesUrl(kitsuId, page), Kitsu::parseEpisodes)
+        override fun aniListMedia(aniListId: Int) =
+            aniListBody(AniListCache.mediaKey(aniListId), aniListRequest(DETAILS_QUERY, JSONObject().put("id", aniListId)))
+        override fun cachedAniList(aniListId: Int) = AniListCache.get(AniListCache.mediaKey(aniListId))
+        override fun cachedKitsu(kitsuId: Int) = KitsuCache.info.get(kitsuId.toString())
+            ?: KitsuCache.bodies.get(Kitsu.detailsUrl(kitsuId))?.let(Kitsu::parseSingle)?.let { EpisodeList.Info(it.titles, null) }
+        override fun rememberKitsu(kitsuId: Int, info: EpisodeList.Info) = KitsuCache.info.put(kitsuId.toString(), info)
+    }
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
+        val episodes = EpisodeLoader.load(showId(anime), anime.title, episodeApi)
         val now = System.currentTimeMillis()
         episodes
             .filter { (it.airDateMillis ?: 0L) <= now }

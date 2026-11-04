@@ -68,6 +68,10 @@ object AniZip {
         return Mapping(aid, romaji, english, list)
     }
 
+    /** the AniList id ani.zip maps the entry to, for the AniList fallback */
+    fun aniListId(body: String): Int? =
+        runCatching { JSONObject(body).optJSONObject("mappings")?.optIntOrNull("anilist_id") }.getOrNull()
+
     private fun parseDate(s: String?): Long? = s?.let {
         runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull()
             ?: runCatching { LocalDate.parse(it).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() }.getOrNull()
