@@ -21,19 +21,25 @@ object AniListRetryPolicy {
     }
 }
 
+/** Paces AniList requests ([AniListPacer]) and retries its 429s; other hosts pass through. */
 object AniListRetry : Interceptor {
     const val ANILIST_HOST = "graphql.anilist.co"
+    const val MIN_GAP_MS = 2000L
+    val pacer = AniListPacer(MIN_GAP_MS)
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        var response = chain.proceed(request)
-        if (request.url.host != ANILIST_HOST) return response
+        if (request.url.host != ANILIST_HOST) return chain.proceed(request)
         var attempt = 1
         while (true) {
-            val wait = AniListRetryPolicy.waitSeconds(response.code, response.header("Retry-After"), attempt) ?: return response
+            val wait = pacer.reserve(System.currentTimeMillis())
+            if (wait > 0) Thread.sleep(wait)
+            val response = chain.proceed(request)
+            val retryS = AniListRetryPolicy.waitSeconds(response.code, response.header("Retry-After"), attempt)
+                ?: return response
             response.close()
-            Thread.sleep(wait * 1000)
-            response = chain.proceed(request)
+            // the whole extension waits, not just this call
+            pacer.holdUntil(System.currentTimeMillis() + retryS * 1000)
             attempt++
         }
     }

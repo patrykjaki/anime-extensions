@@ -107,6 +107,14 @@ object AniListParser {
             (0 until (syn?.length() ?: 0)).mapNotNull { syn!!.optString(it).ifEmpty { null } }
     }
 
+    /** Media objects of a Page or Media(id) response; null when it carries no data (errors, 429). */
+    fun mediaObjects(body: String): List<JSONObject>? {
+        val data = runCatching { JSONObject(body).optJSONObject("data") }.getOrNull() ?: return null
+        data.optJSONObject("Media")?.let { return listOf(it) }
+        val arr = data.optJSONObject("Page")?.optJSONArray("media") ?: return null
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+    }
+
     fun parseSingle(body: String): Media? =
         JSONObject(body).optJSONObject("data")?.optJSONObject("Media")?.let(::parseMedia)
 

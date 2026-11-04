@@ -80,6 +80,26 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         return aniListRequest(if (search == null) PAGE_QUERY else SEARCH_QUERY, vars)
     }
 
+    /** AniList body for [key] from [AniListCache], else fetched (paced and retried by [AniListRetry]) and cached */
+    private fun aniListBody(key: String, request: Request): String {
+        AniListCache.get(key)?.let { return it }
+        val body = client.newCall(request).execute().use { r ->
+            if (!r.isSuccessful) throw Exception("AniList HTTP ${r.code}")
+            r.body.string()
+        }
+        AniListCache.putResponse(key, body)
+        return body
+    }
+
+    private suspend fun cachedPage(page: Int, sort: String, search: String?): AnimesPage = withContext(Dispatchers.IO) {
+        parsePage(aniListBody(AniListCache.pageKey(sort, page, search), pageRequest(page, sort, search)))
+    }
+
+    override suspend fun getPopularAnime(page: Int) = cachedPage(page, "POPULARITY_DESC", null)
+    override suspend fun getLatestUpdates(page: Int) = cachedPage(page, "TRENDING_DESC", null)
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList) =
+        cachedPage(page, "SEARCH_MATCH", query.trim())
+
     override fun popularAnimeRequest(page: Int) = pageRequest(page, "POPULARITY_DESC", null)
     override fun popularAnimeParse(response: Response) = parsePage(response)
     override fun latestUpdatesRequest(page: Int) = pageRequest(page, "TRENDING_DESC", null)
@@ -88,8 +108,10 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         pageRequest(page, "SEARCH_MATCH", query.trim())
     override fun searchAnimeParse(response: Response) = parsePage(response)
 
-    private fun parsePage(response: Response): AnimesPage {
-        val page = AniListParser.parsePage(response.use { it.body.string() })
+    private fun parsePage(response: Response): AnimesPage = parsePage(response.use { it.body.string() })
+
+    private fun parsePage(body: String): AnimesPage {
+        val page = AniListParser.parsePage(body)
         return AnimesPage(page.media.map(::toSAnime), page.hasNext)
     }
 
@@ -116,6 +138,12 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun animeDetailsRequest(anime: SAnime) =
         aniListRequest(DETAILS_QUERY, JSONObject().put("id", anilistId(anime)))
 
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime = withContext(Dispatchers.IO) {
+        val id = anilistId(anime)
+        val body = aniListBody(AniListCache.mediaKey(id), animeDetailsRequest(anime))
+        toSAnime(AniListParser.parseSingle(body) ?: error("AniList returned no media"))
+    }
+
     override fun animeDetailsParse(response: Response): SAnime {
         val m = AniListParser.parseSingle(response.use { it.body.string() }) ?: error("AniList returned no media")
         return toSAnime(m)
@@ -127,22 +155,11 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
         val id = anilistId(anime)
-        // titles plus airing data (the fallback below needs it); one AniList request
-        val aniListBody = runCatching {
-            client.newCall(aniListRequest(TITLES_QUERY, JSONObject().put("id", id))).execute()
-                .use { it.body.string() }
-        }.getOrNull()
-        val aniListTitles = aniListBody?.let { runCatching { AniListParser.parseTitles(it) }.getOrNull() }
-            ?.ifEmpty { null } ?: listOf(anime.title)
+        val mediaKey = AniListCache.mediaKey(id)
         val req = Request.Builder().url("$ANIZIP_URL?anilist_id=$id").headers(headers).build()
-        val mapping = client.newCall(req).execute().use { AniZip.parse(it.body.string(), aniListTitles) }
-        val episodes = if (mapping.aid != null) {
-            mapping.episodes
-        } else {
-            // no AniDB entry yet: episodes from AniList, releases by title search
-            val query = aniListTitles.firstOrNull { it.isNotBlank() } ?: anime.title
-            NoAniDb.episodes(aniListBody?.let(NoAniDb::airedCount) ?: 0, query, Titles.keys(aniListTitles))
-                .ifEmpty { throw Exception("No AniDB entry and no aired episodes on AniList") }
+        val aniZipBody = client.newCall(req).execute().use { it.body.string() }
+        val episodes = EpisodeList.build(anime.title, aniZipBody, AniListCache.get(mediaKey)) {
+            runCatching { aniListBody(mediaKey, animeDetailsRequest(anime)) }.getOrNull()
         }
         val now = System.currentTimeMillis()
         episodes
@@ -273,12 +290,11 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
         private const val MEDIA_FIELDS =
-            "id title{romaji english} coverImage{extraLarge large} status description genres studios(isMain:true){nodes{name}}"
+            "id title{romaji english} synonyms episodes nextAiringEpisode{episode} coverImage{extraLarge large} status description genres studios(isMain:true){nodes{name}}"
         private const val PAGE_QUERY =
             "query(\$page:Int,\$sort:[MediaSort]){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort){$MEDIA_FIELDS}}}"
         private const val SEARCH_QUERY =
             "query(\$page:Int,\$sort:[MediaSort],\$search:String){Page(page:\$page,perPage:30){pageInfo{hasNextPage} media(type:ANIME,isAdult:false,sort:\$sort,search:\$search){$MEDIA_FIELDS}}}"
-        private const val TITLES_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){title{romaji english} synonyms episodes status nextAiringEpisode{episode}}}"
         private const val DETAILS_QUERY = "query(\$id:Int){Media(id:\$id,type:ANIME){$MEDIA_FIELDS}}"
     }
 }
