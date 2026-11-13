@@ -33,7 +33,9 @@ when Kitsu is down), episodes matched by AniDB id via [ani.zip](https://api.ani.
   it has one, otherwise from the release name.
 
 Playing magnet links needs Editotsu (built-in torrent engine) or Aniyomi with TorrServer. Editotsu
-reads the release data below; other apps show the title, which ends with a seeders/size line.
+reads the release data below: its release picker sorts by seeders, size or quality and filters by
+resolution, codec, HDR and release group. Other apps show the title, which ends with a
+seeders/size line.
 
 ## Issues
 
