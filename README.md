@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="src/all/editotsutorrents/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Editotsu" width="96">
+
 # Editotsu Extensions
 
 | Editotsu | Aniyomi | Build |
