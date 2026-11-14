@@ -60,7 +60,7 @@ class LiveCheckTest {
         c.outputStream.use { it.write(body.toByteArray()) }
         val aniList = c.inputStream.use { String(it.readBytes()) }
         val titles = AniListParser.parseTitles(aniList)
-        val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles), titles.getOrNull(1).orEmpty())
+        val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles), titles.getOrNull(1).orEmpty(), Titles.nickname(titles))
         val ep = eps.first { it.ref.anidbEp == episode }.ref
         val tosho = TitleSearch.untagged(TitleSearch.queries(ep).flatMap { q ->
             ToshoParser.parseList(String(get("https://feed.animetosho.net/json?q=${Text.urlEncode(q)}")))

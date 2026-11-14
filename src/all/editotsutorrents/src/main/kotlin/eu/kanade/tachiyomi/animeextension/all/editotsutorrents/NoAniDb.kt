@@ -23,12 +23,12 @@ object NoAniDb {
         return m.optInt("episodes", 0).coerceAtLeast(0)
     }
 
-    fun episodes(count: Int, query: String, titles: List<String>, altQuery: String = ""): List<AniZip.Episode> =
+    fun episodes(count: Int, query: String, titles: List<String>, altQuery: String = "", nickQuery: String = ""): List<AniZip.Episode> =
         (1..count).map { n ->
             AniZip.Episode(
                 ref = EpisodeRef(
                     aid = AID, eid = null, anidbEp = n, season = null, seasonEp = n, absolute = n,
-                    query = query, titles = titles, altQuery = altQuery,
+                    query = query, titles = titles, altQuery = altQuery, nickQuery = nickQuery,
                 ),
                 title = null, airDateMillis = null, image = null, overview = null,
             )

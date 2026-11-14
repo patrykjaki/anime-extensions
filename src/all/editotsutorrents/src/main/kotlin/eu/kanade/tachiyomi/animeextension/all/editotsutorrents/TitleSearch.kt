@@ -11,8 +11,9 @@ object TitleSearch {
     fun queries(ep: EpisodeRef): List<String> {
         val number = ep.anidbEp.toString().padStart(2, '0')
         val season = ep.effectiveSeason.toString().padStart(2, '0')
-        val titles = listOf(ep.query, ep.altQuery).filter { it.isNotBlank() }
-            .map { Titles.short(it).replace(Regex("['’`]"), "") }.distinct()
+        // the nickname's hyphen goes too: "Chii-Fuyo" is released as "Chii Fuyo"
+        val titles = (listOf(ep.query, ep.altQuery).map(Titles::short) + ep.nickQuery.replace('-', ' '))
+            .filter { it.isNotBlank() }.map { it.replace(Regex("['’`]"), "") }.distinct()
         return titles.flatMap { listOf("$it $number", "$it S${season}E$number") } + titles.take(1)
     }
 

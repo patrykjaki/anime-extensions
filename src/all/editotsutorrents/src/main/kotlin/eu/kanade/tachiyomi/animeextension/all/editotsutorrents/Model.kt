@@ -16,6 +16,8 @@ data class EpisodeRef(
     val titles: List<String> = emptyList(),
     /** a second title to search by (the English one when [query] is romaji); empty = none */
     val altQuery: String = "",
+    /** the short name groups release a long-titled show under ("Chii Fuyo"); empty = none */
+    val nickQuery: String = "",
 ) {
     /** season used for name checks: the tvdb season, or 1 when ani.zip doesn't state one */
     val effectiveSeason: Int get() = season ?: 1
@@ -30,6 +32,7 @@ data class EpisodeRef(
         append("&q=").append(Text.urlEncode(query))
         if (titles.isNotEmpty()) append("&t=").append(titles.joinToString("."))
         if (altQuery.isNotEmpty()) append("&q2=").append(Text.urlEncode(altQuery))
+        if (nickQuery.isNotEmpty()) append("&q3=").append(Text.urlEncode(nickQuery))
     }
 
     companion object {
@@ -48,6 +51,7 @@ data class EpisodeRef(
                 query = params["q"].orEmpty(),
                 titles = params["t"]?.split('.')?.filter { it.isNotEmpty() }.orEmpty(),
                 altQuery = params["q2"].orEmpty(),
+                nickQuery = params["q3"].orEmpty(),
             )
         }
     }

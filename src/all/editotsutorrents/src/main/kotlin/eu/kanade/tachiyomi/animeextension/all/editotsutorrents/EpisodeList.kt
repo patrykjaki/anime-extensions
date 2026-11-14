@@ -36,7 +36,7 @@ object EpisodeList {
         val query = catalogueTitles.firstOrNull { it.isNotBlank() } ?: fallbackTitle
         // most release names use the English title, some the romaji one: search by both
         val alt = catalogueTitles.firstOrNull { it.isNotBlank() && Titles.key(it) != Titles.key(query) && Titles.key(it).length >= 4 }.orEmpty()
-        return NoAniDb.episodes(info?.airedCount ?: 0, query, Titles.keys(catalogueTitles), alt)
+        return NoAniDb.episodes(info?.airedCount ?: 0, query, Titles.keys(catalogueTitles), alt, Titles.nickname(catalogueTitles))
             .ifEmpty { throw Exception("No AniDB entry and no aired episodes known") }
     }
 

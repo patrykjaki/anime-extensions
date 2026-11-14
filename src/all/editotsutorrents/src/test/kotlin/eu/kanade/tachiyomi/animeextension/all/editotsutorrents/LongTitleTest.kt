@@ -51,4 +51,17 @@ class LongTitleTest {
         val cands = Selection.candidates(TitleSearch.untagged(listOf(row)), ep)
         assertTrue(cands.single() is Selection.Candidate.Direct)
     }
+
+    @Test
+    fun `a long-titled show is also searched by the nickname the catalogue lists`() {
+        val titles = listOf(romaji, english, "The Exiled Cheating Magician Enjoys an Unrestrained Second Life.", "Chii-Fuyo", "チー付与")
+        assertEquals("Chii-Fuyo", Titles.nickname(titles))
+        assertEquals("", Titles.nickname(listOf("Sousou no Frieren", "Frieren")))
+        val nick = ep.copy(nickQuery = "Chii-Fuyo", titles = Titles.keys(titles))
+        assertTrue("Chii Fuyo 01" in TitleSearch.queries(nick))
+        assertEquals(nick, EpisodeRef.fromUrl(nick.toUrl()))
+        val name = "[SubsPlease] Chii Fuyo - 01 (1080p) [09AA1B3D].mkv"
+        assertTrue(EpisodeMatcher.isEpisode(name, nick))
+        assertNull(EpisodeMatcher.rejectReason(name, nick, requireTitle = true))
+    }
 }
