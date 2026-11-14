@@ -13,11 +13,14 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -259,17 +262,43 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ============================== Releases ==============================
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = coroutineScope {
-        val ep = EpisodeRef.fromUrl(episode.url) ?: return@coroutineScope emptyList()
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val key = "${episode.url}|$showOldRevisions"
+        hosterLists.get(key)?.let { return it }
+        val (list, complete) = loadHosterList(episode)
+        // a list built without the show pages is not kept, so the next open has the packs too
+        if (list.isNotEmpty() && complete) hosterLists.put(key, list)
+        return list
+    }
+
+    /** feed rows for [url]: cached, else fetched in [background] so a late answer is kept */
+    private fun feedRowsAsync(url: String) = background.async {
+        val body = feedBodies.get(url) ?: runCatching { getText(url) }.getOrNull()?.also { feedBodies.put(url, it) }
+        body?.let { runCatching { ToshoParser.parseList(it) }.getOrNull() }.orEmpty()
+    }
+
+    /** the list, and whether every feed page was in it */
+    private suspend fun loadHosterList(episode: SEpisode): Pair<List<Hoster>, Boolean> = coroutineScope {
+        val ep = EpisodeRef.fromUrl(episode.url) ?: return@coroutineScope emptyList<Hoster>() to true
+        var complete = true
 
         // AnimeTosho is indexed by AniDB ids; without one only the title search below can match
-        val toshoUrls = if (ep.aid == NoAniDb.AID) emptyList() else buildList {
-            ep.eid?.let { add("$TOSHO_FEED?eid=$it") }
-            for (page in 1..TOSHO_AID_PAGES) add("$TOSHO_FEED?aid=${ep.aid}&page=$page")
+        val hasAid = ep.aid != NoAniDb.AID
+        val byEpisode = if (hasAid) ep.eid?.let { feedRowsAsync("$TOSHO_FEED?eid=$it") } else null
+        val byShow = if (hasAid) (1..TOSHO_AID_PAGES).map { feedRowsAsync("$TOSHO_FEED?aid=${ep.aid}&page=$it") } else emptyList()
+        val episodeRows = byEpisode?.await().orEmpty()
+        // the show pages add season packs and can take seconds. With enough seeded releases of
+        // this episode already in hand they get a short grace; what arrives later is cached.
+        val enough = Selection.candidates(episodeRows, ep)
+            .count { it is Selection.Candidate.Direct && (it.row.seeders ?: 0) > 0 } >= ENOUGH_RELEASES
+        val showRows = if (enough) {
+            withTimeoutOrNull(SHOW_PAGES_GRACE_MS) { byShow.awaitAll() }
+                ?: byShow.map { d -> if (d.isCompleted) d.await() else emptyList() }
+        } else {
+            byShow.awaitAll()
         }
-        val toshoRows = toshoUrls.map { url ->
-            async(Dispatchers.IO) { runCatching { ToshoParser.parseList(getText(url)) }.getOrDefault(emptyList()) }
-        }.awaitAll().flatten()
+        complete = byShow.all { it.isCompleted }
+        val toshoRows = episodeRows + showRows.flatten()
 
         var picks = resolve(Selection.candidates(toshoRows, ep), ep)
 
@@ -288,7 +317,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         // one flat list: the app prefixes every title with its hoster name, which its text parser
         // then took for the release group ("Nyaa" cards). The tracker is in the title's ⚙️ part.
         val videos = Selection.sort(picks).map { p -> toVideo(p, ep) }
-        if (videos.isEmpty()) emptyList() else videos.toHosterList()
+        (if (videos.isEmpty()) emptyList() else videos.toHosterList()) to complete
     }
 
     private suspend fun resolve(cands: List<Selection.Candidate>, ep: EpisodeRef): List<Pick> = coroutineScope {
@@ -308,20 +337,27 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     /**
      * Attach MediaInfo to each pick: animetosho rows by listing id, Nyaa rows by info hash
      * (animetosho mirrors most of Nyaa). Rows it doesn't have keep media = null and the app
-     * gets the name-derived fields instead. Most-seeded rows first, capped, in parallel.
+     * gets the name-derived fields instead. Most-seeded rows first.
+     *
+     * The feed slows a client down after a burst of requests (seconds per request, growing),
+     * so only the top rows are asked and the list doesn't wait past [MEDIA_BUDGET_MS]:
+     * answers that come later land in [mediaBodies] for the next time the episode is opened.
      */
-    private suspend fun withMedia(picks: List<Pick>): List<Pick> = coroutineScope {
+    private suspend fun withMedia(picks: List<Pick>): List<Pick> {
         val sorted = Selection.sort(picks)
         val head = sorted.take(MAX_MEDIA_FETCHES)
-        val shows = head.map { it.row }.distinctBy { it.infoHash }.map { row ->
-            async(Dispatchers.IO) {
-                val url = row.toshoId?.let { "$TOSHO_FEED?show=torrent&id=$it" }
-                    ?: "$TOSHO_FEED?show=torrent&btih=${row.infoHash}"
-                row.infoHash to runCatching { getText(url) }.getOrNull()
+        val pending = head.map { it.row }.distinctBy { it.infoHash }
+            .filter { mediaBodies.get(it.infoHash) == null }
+            .map { row ->
+                background.async {
+                    val url = row.toshoId?.let { "$TOSHO_FEED?show=torrent&id=$it" }
+                        ?: "$TOSHO_FEED?show=torrent&btih=${row.infoHash}"
+                    runCatching { getText(url) }.getOrNull()?.let { mediaBodies.put(row.infoHash, it) }
+                }
             }
-        }.awaitAll().toMap()
-        head.map { p ->
-            val body = shows[p.row.infoHash] ?: return@map p
+        withTimeoutOrNull(MEDIA_BUDGET_MS) { pending.awaitAll() }
+        return head.map { p ->
+            val body = mediaBodies.get(p.row.infoHash) ?: return@map p
             p.copy(media = runCatching { MediaInfo.fromShow(body, p.fileName) }.getOrNull())
         } + sorted.drop(MAX_MEDIA_FETCHES)
     }
@@ -333,6 +369,12 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         internalData = VideoData.internalData(p, ep.eid),
         initialized = true,
     )
+
+    /** detail fetches outlive the call that started them, so a slow answer still fills the cache */
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mediaBodies = TimedCache<String>(400, Long.MAX_VALUE)
+    private val feedBodies = TimedCache<String>(60, HOSTER_LIST_TTL_MS)
+    private val hosterLists = TimedCache<List<Hoster>>(30, HOSTER_LIST_TTL_MS)
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
@@ -362,7 +404,11 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val NYAA_URL = "https://nyaa.si"
         private const val TOSHO_AID_PAGES = 2
         private const val MAX_TORRENT_FETCHES = 10
-        private const val MAX_MEDIA_FETCHES = 40
+        private const val MAX_MEDIA_FETCHES = 12
+        private const val MEDIA_BUDGET_MS = 700L
+        private const val SHOW_PAGES_GRACE_MS = 300L
+        private const val ENOUGH_RELEASES = 8
+        private const val HOSTER_LIST_TTL_MS = 5 * 60_000L
         private const val MAX_TORRENT_BYTES = 8L * 1024 * 1024
         private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
