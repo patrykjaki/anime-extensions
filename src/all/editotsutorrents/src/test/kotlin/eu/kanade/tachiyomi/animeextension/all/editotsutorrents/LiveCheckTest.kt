@@ -60,10 +60,11 @@ class LiveCheckTest {
         c.outputStream.use { it.write(body.toByteArray()) }
         val aniList = c.inputStream.use { String(it.readBytes()) }
         val titles = AniListParser.parseTitles(aniList)
-        val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles))
+        val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles), titles.getOrNull(1).orEmpty())
         val ep = eps.first { it.ref.anidbEp == episode }.ref
-        val qs = Text.urlEncode("${ep.query} ${ep.anidbEp.toString().padStart(2, '0')}")
-        val nyaa = NyaaParser.parse(String(get("https://nyaa.si/?page=rss&c=1_0&f=0&q=$qs")))
+        val nyaa = TitleSearch.queries(ep).flatMap { q ->
+            NyaaParser.parse(String(get("https://nyaa.si/?page=rss&c=1_0&f=0&q=${Text.urlEncode(q)}")))
+        }
         val cands = Selection.candidates(nyaa, ep)
         println("anilist $anilistId (no anidb): episodes=${eps.size} nyaa rows=${nyaa.size} candidates=${cands.size} direct=${cands.count { it is Selection.Candidate.Direct }}")
     }
@@ -72,6 +73,8 @@ class LiveCheckTest {
     fun liveNoAniDb() {
         assumeTrue(System.getenv("EDITOTSU_LIVE") == "1")
         runNoAniDb(206814, 1) // Dragon Ball Super: Beerus (re-edit, no AniDB entry)
+        runNoAniDb(207329, 1) // very long light-novel title, released under a short romaji or the English title
+        runNoAniDb(203275, 3) // Demons' Crest: apostrophe in the title
     }
 
     @Test

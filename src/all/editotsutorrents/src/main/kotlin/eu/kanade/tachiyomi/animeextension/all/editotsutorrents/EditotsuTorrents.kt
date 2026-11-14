@@ -304,11 +304,13 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         var picks = resolve(Selection.candidates(toshoRows, ep), ep)
 
         if (picks.isEmpty() && ep.query.isNotBlank()) {
-            // apostrophes out: release names write "Demons' Crest" as "Demons Crest" as often as not
-            val q = Text.urlEncode("${ep.query.replace(Regex("['’`]"), "")} ${ep.anidbEp.toString().padStart(2, '0')}")
-            val nyaaRows = withContext(Dispatchers.IO) {
-                runCatching { NyaaParser.parse(getText("$NYAA_URL/?page=rss&c=1_0&f=0&q=$q")) }.getOrDefault(emptyList())
-            }
+            val queries = TitleSearch.queries(ep)
+            val nyaaRows = queries.map { q ->
+                async(Dispatchers.IO) {
+                    runCatching { NyaaParser.parse(getText("$NYAA_URL/?page=rss&c=1_0&f=0&q=${Text.urlEncode(q)}")) }
+                        .getOrDefault(emptyList())
+                }
+            }.awaitAll().flatten()
             picks = resolve(Selection.candidates(nyaaRows, ep), ep)
         }
 

@@ -14,6 +14,8 @@ data class EpisodeRef(
     val query: String,
     /** normalized titles of this entry ([Titles.key]); empty = title checks off */
     val titles: List<String> = emptyList(),
+    /** a second title to search by (the English one when [query] is romaji); empty = none */
+    val altQuery: String = "",
 ) {
     /** season used for name checks: the tvdb season, or 1 when ani.zip doesn't state one */
     val effectiveSeason: Int get() = season ?: 1
@@ -27,6 +29,7 @@ data class EpisodeRef(
         absolute?.let { append("&abs=").append(it) }
         append("&q=").append(Text.urlEncode(query))
         if (titles.isNotEmpty()) append("&t=").append(titles.joinToString("."))
+        if (altQuery.isNotEmpty()) append("&q2=").append(Text.urlEncode(altQuery))
     }
 
     companion object {
@@ -44,6 +47,7 @@ data class EpisodeRef(
                 absolute = params["abs"]?.toIntOrNull(),
                 query = params["q"].orEmpty(),
                 titles = params["t"]?.split('.')?.filter { it.isNotEmpty() }.orEmpty(),
+                altQuery = params["q2"].orEmpty(),
             )
         }
     }

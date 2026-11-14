@@ -1,0 +1,18 @@
+package eu.kanade.tachiyomi.animeextension.all.editotsutorrents
+
+/** Search phrases for an episode of an entry that has no AniDB id, so only a title search can find it. */
+object TitleSearch {
+    /**
+     * Each title is searched as "Title 03" and "Title S01E03" (groups use one or the other), and
+     * the main title once without a number for packs; the matcher decides which rows are this
+     * episode. Apostrophes are left out: release names write "Demons' Crest" as "Demons Crest"
+     * as often as not.
+     */
+    fun queries(ep: EpisodeRef): List<String> {
+        val number = ep.anidbEp.toString().padStart(2, '0')
+        val season = ep.effectiveSeason.toString().padStart(2, '0')
+        val titles = listOf(ep.query, ep.altQuery).filter { it.isNotBlank() }
+            .map { Titles.short(it).replace(Regex("['’`]"), "") }.distinct()
+        return titles.flatMap { listOf("$it $number", "$it S${season}E$number") } + titles.take(1)
+    }
+}
