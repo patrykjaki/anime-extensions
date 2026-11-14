@@ -10,7 +10,7 @@ import org.json.JSONObject
  *  "tracker","anidbEid","seadex":{"best","alt"}} — raw facts only. Keys whose value is unknown are
  * left out (missing key = app falls back to text parsing for that field). Extra keys, ignored by
  * readers that don't know them: "sizeApprox", "trusted", "remake", "toshoIsSeadex", "source",
- * "numFiles", "anidbAid".
+ * "numFiles", "anidbAid", "debrid", "resolve", "instant".
  */
 object VideoData {
     fun magnet(p: Pick): String = buildString {
@@ -21,7 +21,12 @@ object VideoData {
         append("&index=").append(p.fileIdx)
     }
 
-    fun internalData(p: Pick, targetEid: Int?): String {
+    /**
+     * [debrid]: id of the debrid service set up in the settings; tells the app to ask
+     * resolveVideo for a link before playing the magnet. [debridCached]: whether that service
+     * has the release ready, when it could be asked (key left out when not known).
+     */
+    fun internalData(p: Pick, targetEid: Int?, debrid: String? = null, debridCached: Boolean? = null): String {
         val r = p.row
         val o = JSONObject()
         o.put("editotsu", 1)
@@ -42,6 +47,10 @@ object VideoData {
         r.remake?.let { o.put("remake", it) }
         if (r.toshoIsSeadex) o.put("toshoIsSeadex", true)
         o.put("source", r.source)
+        // "resolve": ask resolveVideo for a link when this release is picked, play the magnet if
+        // it returns none. "instant": that link is known to be ready.
+        debrid?.let { o.put("debrid", it).put("resolve", true) }
+        debridCached?.let { o.put("instant", it) }
         // chip data: what the file contains (MediaInfo), else what the names state
         val tags = ReleaseTags.of(r.torrentName, p.fileName, r.title)
         o.put("tags", tags.toJson())

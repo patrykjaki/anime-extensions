@@ -2,6 +2,9 @@ package eu.kanade.tachiyomi.animeextension.all.editotsutorrents
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.text.InputType
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -64,6 +67,66 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
                 "Off: only the newest version that has seeders."
             setDefaultValue(false)
         }.also(screen::addPreference)
+
+        ListPreference(screen.context).apply {
+            key = PREF_DEBRID
+            title = "Debrid service"
+            entries = (listOf("None") + Debrid.Service.entries.map { it.label }).toTypedArray()
+            entryValues = (listOf("") + Debrid.Service.entries.map { it.id }).toTypedArray()
+            setDefaultValue("")
+            summary = "%s\nReleases your debrid account already has play from its servers. " +
+                "The rest play as torrents, as before."
+        }.also(screen::addPreference)
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_DEBRID_KEY
+            title = "Debrid API key"
+            summary = "From your account page on the service's website. Stored on this device only."
+            dialogTitle = "Debrid API key"
+            setDefaultValue("")
+            setOnBindEditTextListener {
+                it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+        }.also(screen::addPreference)
+    }
+
+    /** the debrid service and key from the settings; null unless both are set */
+    private val debrid: Pair<Debrid.Service, String>?
+        get() {
+            val service = Debrid.Service.of(preferences?.getString(PREF_DEBRID, "")) ?: return null
+            val key = preferences?.getString(PREF_DEBRID_KEY, "")?.trim().orEmpty()
+            return if (key.isEmpty()) null else service to key
+        }
+
+    private val debridHttp = DebridHttp { method, url, bearer, form ->
+        val body = form?.let { pairs ->
+            okhttp3.FormBody.Builder().apply { pairs.forEach { (k, v) -> add(k, v) } }.build()
+        } ?: if (method == "POST") ByteArray(0).toRequestBody(null) else null
+        val request = Request.Builder().url(url).method(method, body)
+        bearer?.let { request.header("Authorization", "Bearer $it") }
+        network.client.newCall(request.build()).execute().use { it.body.string() }
+    }
+
+    /**
+     * The debrid link for a release when the account has it ready, else the video as it is
+     * (the magnet). Called by the app when the release is picked, for videos whose data
+     * carries "resolve".
+     */
+    override suspend fun resolveVideo(video: Video): Video? {
+        val (service, key) = debrid ?: return video
+        if (!video.videoUrl.startsWith("magnet:")) return video
+        val data = runCatching { JSONObject(video.internalData) }.getOrNull() ?: return video
+        val want = Debrid.Want(
+            // the services want a plain magnet; "&index=" is this extension's own parameter
+            magnet = video.videoUrl.substringBefore("&index="),
+            infoHash = data.optString("infoHash"),
+            fileName = data.optStringOrNull("fileName"),
+            sizeBytes = data.optLongOrNull("sizeBytes"),
+        )
+        val link = withContext(Dispatchers.IO) {
+            runCatching { Debrid.resolve(service, debridHttp, key, want) }.getOrNull()
+        } ?: return video
+        return video.copy(videoUrl = link)
     }
 
     // ============================== Catalogue (Kitsu, AniList fallback) ==============================
@@ -264,7 +327,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     // ============================== Releases ==============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val key = "${episode.url}|$showOldRevisions"
+        val key = "${episode.url}|$showOldRevisions|${debrid?.first?.id.orEmpty()}"
         hosterLists.get(key)?.let { return it }
         val (list, complete) = loadHosterList(episode)
         // a list built without the show pages is not kept, so the next open has the packs too
@@ -324,7 +387,16 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
         // one flat list: the app prefixes every title with its hoster name, which its text parser
         // then took for the release group ("Nyaa" cards). The tracker is in the title's ⚙️ part.
-        val videos = Selection.sort(picks).map { p -> toVideo(p, ep) }
+        val service = debrid
+        // which releases the account has ready, where the service can say without adding them
+        val ready = service?.let { (s, key) ->
+            withContext(Dispatchers.IO) {
+                runCatching { Debrid.cached(s, debridHttp, key, picks.map { it.row.infoHash }.distinct()) }.getOrNull()
+            }
+        }
+        val videos = Selection.sort(picks)
+            .sortedByDescending { ready?.contains(it.row.infoHash) == true }
+            .map { p -> toVideo(p, ep, service?.first?.id, ready?.contains(p.row.infoHash)) }
         (if (videos.isEmpty()) emptyList() else videos.toHosterList()) to complete
     }
 
@@ -370,11 +442,11 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         } + sorted.drop(MAX_MEDIA_FETCHES)
     }
 
-    private fun toVideo(p: Pick, ep: EpisodeRef) = Video(
+    private fun toVideo(p: Pick, ep: EpisodeRef, debrid: String? = null, debridCached: Boolean? = null) = Video(
         videoUrl = VideoData.magnet(p),
         videoTitle = VideoData.title(p),
         resolution = VideoData.resolution(p),
-        internalData = VideoData.internalData(p, ep.eid),
+        internalData = VideoData.internalData(p, ep.eid, debrid, debridCached),
         initialized = true,
     )
 
@@ -406,6 +478,8 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
     companion object {
         private const val PREF_OLD_REVISIONS = "show_old_revisions"
+        private const val PREF_DEBRID = "debrid_service"
+        private const val PREF_DEBRID_KEY = "debrid_api_key"
         private const val ANILIST_URL = "https://graphql.anilist.co"
         private const val ANIZIP_URL = "https://api.ani.zip/mappings"
         private const val TOSHO_FEED = "https://feed.animetosho.net/json"
