@@ -62,11 +62,16 @@ class LiveCheckTest {
         val titles = AniListParser.parseTitles(aniList)
         val eps = NoAniDb.episodes(NoAniDb.airedCount(aniList), titles.first(), Titles.keys(titles), titles.getOrNull(1).orEmpty())
         val ep = eps.first { it.ref.anidbEp == episode }.ref
-        val nyaa = TitleSearch.queries(ep).flatMap { q ->
+        val tosho = TitleSearch.untagged(TitleSearch.queries(ep).flatMap { q ->
+            ToshoParser.parseList(String(get("https://feed.animetosho.net/json?q=${Text.urlEncode(q)}")))
+        })
+        val nyaa = tosho + TitleSearch.queries(ep).flatMap { q ->
             NyaaParser.parse(String(get("https://nyaa.si/?page=rss&c=1_0&f=0&q=${Text.urlEncode(q)}")))
         }
+        println("  by title: tosho rows=${tosho.size}, tosho-only candidates=${Selection.candidates(tosho, ep).size}")
         val cands = Selection.candidates(nyaa, ep)
         println("anilist $anilistId (no anidb): episodes=${eps.size} nyaa rows=${nyaa.size} candidates=${cands.size} direct=${cands.count { it is Selection.Candidate.Direct }}")
+        cands.forEach { println("    [${it.row.source}] ${it.row.title.take(120)}") }
     }
 
     @Test

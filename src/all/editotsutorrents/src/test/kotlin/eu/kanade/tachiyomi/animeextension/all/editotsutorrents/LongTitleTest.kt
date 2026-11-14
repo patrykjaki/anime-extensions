@@ -38,4 +38,17 @@ class LongTitleTest {
         assertTrue(q.contains("Tsuihou Sareta Cheat Fuyo Majutsushi wa Kimama na Second Life wo Ouka Suru 01"))
         assertTrue(q.contains("The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life S01E01"))
     }
+
+    @Test
+    fun `a title-search row tagged with an AniDB id still matches an entry that has none`() {
+        val row = ToshoParser.parseRow(
+            org.json.JSONObject()
+                .put("info_hash", "0123456789abcdef0123456789abcdef01234567")
+                .put("title", "[Erai-raws] The Laid-Off Cheat-Granting Mage Enjoys a Second Lease on Life - 01 [1080p CR WEB-DL AVC AAC][MultiSub].mkv")
+                .put("num_files", 1).put("anidb_aid", 19000).put("anidb_eid", 300000),
+        )!!
+        assertTrue(Selection.candidates(listOf(row), ep).isEmpty())
+        val cands = Selection.candidates(TitleSearch.untagged(listOf(row)), ep)
+        assertTrue(cands.single() is Selection.Candidate.Direct)
+    }
 }

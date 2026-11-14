@@ -32,7 +32,7 @@ import uy.kohesive.injekt.api.get
 
 /**
  * Torrent source for Editotsu. Catalogue = Kitsu (AniList when Kitsu fails); episodes = ani.zip (anidb ids);
- * releases = feed.animetosho.net (anidb-indexed), Nyaa RSS when that has nothing.
+ * releases = feed.animetosho.net (anidb-indexed); a title search of it and of Nyaa RSS when that has nothing.
  * Every video carries the editotsu internalData contract (see [VideoData]).
  */
 class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
@@ -305,13 +305,17 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
 
         if (picks.isEmpty() && ep.query.isNotBlank()) {
             val queries = TitleSearch.queries(ep)
-            val nyaaRows = queries.map { q ->
+            // both indexes by title: each lists releases the other lacks. AnimeTosho rows go
+            // first, so a release found in both keeps its tracker list and listing id.
+            val toshoByTitle = queries.map { q -> feedRowsAsync("$TOSHO_FEED?q=${Text.urlEncode(q)}") }
+            val nyaaByTitle = queries.map { q ->
                 async(Dispatchers.IO) {
                     runCatching { NyaaParser.parse(getText("$NYAA_URL/?page=rss&c=1_0&f=0&q=${Text.urlEncode(q)}")) }
                         .getOrDefault(emptyList())
                 }
-            }.awaitAll().flatten()
-            picks = resolve(Selection.candidates(nyaaRows, ep), ep)
+            }
+            val titleRows = TitleSearch.untagged(toshoByTitle.awaitAll().flatten()) + nyaaByTitle.awaitAll().flatten()
+            picks = resolve(Selection.candidates(titleRows, ep), ep)
         }
 
         // before MediaInfo, so superseded revisions don't use up its fetch cap

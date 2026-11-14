@@ -15,4 +15,12 @@ object TitleSearch {
             .map { Titles.short(it).replace(Regex("['’`]"), "") }.distinct()
         return titles.flatMap { listOf("$it $number", "$it S${season}E$number") } + titles.take(1)
     }
+
+    /**
+     * Rows of a title search for an entry we have no AniDB id for. Their AniDB tags can't be
+     * compared with anything, and the matcher drops a tagged row whose id differs from the
+     * entry's, so the tags are removed and the rows are judged by title and numbers like any
+     * other title-search row.
+     */
+    fun untagged(rows: List<TorrentRow>): List<TorrentRow> = rows.map { it.copy(anidbAid = null, anidbEid = null) }
 }
