@@ -79,25 +79,28 @@ object Debrid {
     }
 
     /**
-     * A https link to [want]'s file when the service has it ready now, else null. A torrent that
-     * had to be added to find out and turned out not ready is removed again, so nothing is left
-     * downloading in the account.
+     * A https link to [want]'s file when the service has it ready now, else null.
+     *
+     * [keep] decides what happens to a torrent that is not ready. false: it is not added, or
+     * removed again when it had to be added to find out, so nothing is left downloading in the
+     * account (the release plays as a torrent instead). true: it stays in the account and
+     * downloads there, for networks where the torrent can't play.
      */
-    fun resolve(service: Service, http: DebridHttp, key: String, want: Want): String? = when (service) {
-        Service.TORBOX -> torBox(http, key, want)
-        Service.REAL_DEBRID -> realDebrid(http, key, want)
-        Service.ALL_DEBRID -> allDebrid(http, key, want)
-        Service.PREMIUMIZE -> premiumize(http, key, want)
-        Service.DEBRID_LINK -> debridLink(http, key, want)
+    fun resolve(service: Service, http: DebridHttp, key: String, want: Want, keep: Boolean = false): String? = when (service) {
+        Service.TORBOX -> torBox(http, key, want, keep)
+        Service.REAL_DEBRID -> realDebrid(http, key, want, keep)
+        Service.ALL_DEBRID -> allDebrid(http, key, want, keep)
+        Service.PREMIUMIZE -> premiumize(http, key, want, keep)
+        Service.DEBRID_LINK -> debridLink(http, key, want, keep)
     }
 
     // ============================== TorBox ==============================
 
-    private fun torBox(http: DebridHttp, key: String, want: Want): String? {
+    private fun torBox(http: DebridHttp, key: String, want: Want, keep: Boolean): String? {
         val created = json(
             http.call(
                 "POST", "$TORBOX/torrents/createtorrent", key,
-                listOf("magnet" to want.magnet, "allow_zip" to "false", "add_only_if_cached" to "true"),
+                listOf("magnet" to want.magnet, "allow_zip" to "false", "add_only_if_cached" to (!keep).toString()),
             ),
         )
         if (!created.optBoolean("success", false)) return null
@@ -105,6 +108,8 @@ object Debrid {
         val listed = json(http.call("GET", "$TORBOX/torrents/mylist?id=$id&bypass_cache=true", key, null))
         // one item, as an object or as a one-element list
         val item = listed.optJSONObject("data") ?: listed.optJSONArray("data")?.optJSONObject(0) ?: return null
+        // with keep the torrent may have been added to download: no link until it is there
+        if (keep && !item.optBoolean("download_present", false) && !item.optBoolean("download_finished", false)) return null
         val files = item.optJSONArray("files").objects().map {
             File(it.optStringOrNull("name") ?: it.optStringOrNull("short_name").orEmpty(), it.optLongOrNull("size") ?: 0, it.optLong("id").toString())
         }
@@ -117,12 +122,12 @@ object Debrid {
 
     // ============================== Real-Debrid ==============================
 
-    private fun realDebrid(http: DebridHttp, key: String, want: Want): String? {
+    private fun realDebrid(http: DebridHttp, key: String, want: Want, keep: Boolean): String? {
         val id = json(http.call("POST", "$REAL_DEBRID/torrents/addMagnet", key, listOf("magnet" to want.magnet)))
             .optStringOrNull("id") ?: return null
         fun info() = json(http.call("GET", "$REAL_DEBRID/torrents/info/$id", key, null))
         fun giveUp(): String? {
-            runCatching { http.call("DELETE", "$REAL_DEBRID/torrents/delete/$id", key, null) }
+            if (!keep) runCatching { http.call("DELETE", "$REAL_DEBRID/torrents/delete/$id", key, null) }
             return null
         }
         // the file list is there once the service has the torrent's metadata; it has it at once
@@ -147,12 +152,12 @@ object Debrid {
 
     // ============================== AllDebrid ==============================
 
-    private fun allDebrid(http: DebridHttp, key: String, want: Want): String? {
+    private fun allDebrid(http: DebridHttp, key: String, want: Want, keep: Boolean): String? {
         val up = json(http.call("POST", "$ALL_DEBRID/v4/magnet/upload?agent=$AGENT", key, listOf("magnets[]" to want.magnet)))
         val magnet = up.optJSONObject("data")?.optJSONArray("magnets")?.optJSONObject(0) ?: return null
         val id = magnet.optLongOrNull("id") ?: return null
         if (!magnet.optBoolean("ready", false)) {
-            runCatching { http.call("GET", "$ALL_DEBRID/v4/magnet/delete?agent=$AGENT&id=$id", key, null) }
+            if (!keep) runCatching { http.call("GET", "$ALL_DEBRID/v4/magnet/delete?agent=$AGENT&id=$id", key, null) }
             return null
         }
         val listed = json(http.call("GET", "$ALL_DEBRID/v4/magnet/files?agent=$AGENT&id%5B%5D=$id", key, null))
@@ -171,11 +176,18 @@ object Debrid {
 
     // ============================== Premiumize ==============================
 
-    private fun premiumize(http: DebridHttp, key: String, want: Want): String? {
+    private fun premiumize(http: DebridHttp, key: String, want: Want, keep: Boolean): String? {
         val body = json(
             http.call("POST", "$PREMIUMIZE/transfer/directdl?apikey=${Text.urlEncode(key)}", null, listOf("src" to want.magnet)),
         )
-        if (body.optString("status") != "success") return null
+        if (body.optString("status") != "success") {
+            if (keep) {
+                runCatching {
+                    http.call("POST", "$PREMIUMIZE/transfer/create?apikey=${Text.urlEncode(key)}", null, listOf("src" to want.magnet))
+                }
+            }
+            return null
+        }
         val files = body.optJSONArray("content").objects().mapNotNull {
             val link = it.optStringOrNull("link") ?: return@mapNotNull null
             File(it.optStringOrNull("path").orEmpty(), it.optLongOrNull("size") ?: 0, link)
@@ -185,7 +197,7 @@ object Debrid {
 
     // ============================== Debrid-Link ==============================
 
-    private fun debridLink(http: DebridHttp, key: String, want: Want): String? {
+    private fun debridLink(http: DebridHttp, key: String, want: Want, keep: Boolean): String? {
         val added = json(http.call("POST", "$DEBRID_LINK/seedbox/add", key, listOf("url" to want.magnet, "async" to "true")))
         val torrent = added.optJSONObject("value") ?: return null
         val id = torrent.optStringOrNull("id")
@@ -196,7 +208,7 @@ object Debrid {
             File(it.optStringOrNull("name").orEmpty(), it.optLongOrNull("size") ?: 0, link)
         }
         val file = pickFile(files, want)
-        if (file == null && id != null && done.isEmpty()) {
+        if (!keep && file == null && id != null && done.isEmpty()) {
             runCatching { http.call("DELETE", "$DEBRID_LINK/seedbox/$id/remove", key, null) }
         }
         return file?.ref?.takeIf { it.startsWith("http") }

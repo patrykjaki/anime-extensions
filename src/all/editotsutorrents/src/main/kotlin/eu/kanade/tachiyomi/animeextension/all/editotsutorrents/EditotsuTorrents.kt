@@ -88,7 +88,20 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
                 it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_DEBRID_ONLY
+            title = "Debrid only"
+            summary = "For networks that block torrents. Lists only the releases your account has ready " +
+                "(TorBox, Premiumize; other services can't say in advance). A release that isn't ready " +
+                "is sent to your account to download instead of playing as a torrent."
+            setDefaultValue(false)
+        }.also(screen::addPreference)
     }
+
+    /** torrents can't play here (blocked network): debrid or nothing */
+    private val debridOnly: Boolean
+        get() = preferences?.getBoolean(PREF_DEBRID_ONLY, false) ?: false
 
     /** the debrid service and key from the settings; null unless both are set */
     private val debrid: Pair<Debrid.Service, String>?
@@ -123,10 +136,14 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
             fileName = data.optStringOrNull("fileName"),
             sizeBytes = data.optLongOrNull("sizeBytes"),
         )
+        val only = debridOnly
         val link = withContext(Dispatchers.IO) {
-            runCatching { Debrid.resolve(service, debridHttp, key, want) }.getOrNull()
-        } ?: return video
-        return video.copy(videoUrl = link)
+            runCatching { Debrid.resolve(service, debridHttp, key, want, keep = only) }.getOrNull()
+        }
+        if (link != null) return video.copy(videoUrl = link)
+        // the app shows this message and does not start the torrent
+        if (only) throw Exception("${service.label} doesn't have this release ready. It was sent to your account; try again in a few minutes, or pick another release.")
+        return video
     }
 
     // ============================== Catalogue (Kitsu, AniList fallback) ==============================
@@ -327,7 +344,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     // ============================== Releases ==============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val key = "${episode.url}|$showOldRevisions|${debrid?.first?.id.orEmpty()}"
+        val key = "${episode.url}|$showOldRevisions|${debrid?.first?.id.orEmpty()}|$debridOnly"
         hosterLists.get(key)?.let { return it }
         val (list, complete) = loadHosterList(episode)
         // a list built without the show pages is not kept, so the next open has the packs too
@@ -394,7 +411,9 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
                 runCatching { Debrid.cached(s, debridHttp, key, picks.map { it.row.infoHash }.distinct()) }.getOrNull()
             }
         }
-        val videos = Selection.sort(picks)
+        // debrid only: what can't play is left out, unless that would leave nothing to send to the account
+        val listed = if (debridOnly && ready != null) picks.filter { it.row.infoHash in ready }.ifEmpty { picks } else picks
+        val videos = Selection.sort(listed)
             .sortedByDescending { ready?.contains(it.row.infoHash) == true }
             .map { p -> toVideo(p, ep, service?.first?.id, ready?.contains(p.row.infoHash)) }
         (if (videos.isEmpty()) emptyList() else videos.toHosterList()) to complete
@@ -480,6 +499,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_OLD_REVISIONS = "show_old_revisions"
         private const val PREF_DEBRID = "debrid_service"
         private const val PREF_DEBRID_KEY = "debrid_api_key"
+        private const val PREF_DEBRID_ONLY = "debrid_only"
         private const val ANILIST_URL = "https://graphql.anilist.co"
         private const val ANIZIP_URL = "https://api.ani.zip/mappings"
         private const val TOSHO_FEED = "https://feed.animetosho.net/json"

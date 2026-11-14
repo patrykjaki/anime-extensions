@@ -142,4 +142,30 @@ class DebridTest {
         assertTrue(data.getBoolean("resolve") && data.getBoolean("instant"))
         assertTrue(!org.json.JSONObject(VideoData.internalData(pick, null, "realdebrid", null)).has("instant"))
     }
+
+    @Test
+    fun `debrid only, a release that is not ready stays in the account to download`() {
+        val realDebrid = Fake(
+            "addMagnet" to """{"id":"T1"}""",
+            "info" to """{"status":"queued","files":[{"id":2,"path":"/Show - 02.mkv","bytes":200}],"links":[]}""",
+        )
+        assertNull(Debrid.resolve(Debrid.Service.REAL_DEBRID, realDebrid, "KEY", want, keep = true))
+        assertTrue(realDebrid.calls.none { it.startsWith("DELETE") })
+
+        val forms = mutableListOf<List<Pair<String, String>>?>()
+        val torBox = DebridHttp { _, url, _, form ->
+            forms += form
+            when {
+                "createtorrent" in url -> """{"success":true,"data":{"torrent_id":9}}"""
+                "mylist" in url -> """{"success":true,"data":{"id":9,"download_present":false,"download_finished":false,"files":[]}}"""
+                else -> "{}"
+            }
+        }
+        assertNull(Debrid.resolve(Debrid.Service.TORBOX, torBox, "KEY", want, keep = true))
+        assertTrue(forms.first()!!.contains("add_only_if_cached" to "false"))
+
+        val premiumize = Fake("directdl" to """{"status":"error","message":"not cached"}""", "transfer/create" to """{"status":"success","id":"x"}""")
+        assertNull(Debrid.resolve(Debrid.Service.PREMIUMIZE, premiumize, "KEY", want, keep = true))
+        assertTrue(premiumize.calls.last().contains("transfer/create"))
+    }
 }
