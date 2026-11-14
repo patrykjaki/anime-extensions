@@ -29,7 +29,9 @@ class AniListTrafficTest {
         val zips: Map<ShowUrl.Id, String?>,
         val aniList: Map<Int, String> = emptyMap(),
         val kitsuDown: Boolean = false,
+        val kitsuAniList: Map<Int, Int> = emptyMap(),
     ) : EpisodeApi {
+        override fun kitsuAniListId(kitsuId: Int): Int? { count("kitsu"); return kitsuAniList[kitsuId] }
         val calls = mutableMapOf<String, Int>()
         private val kitsuInfo = mutableMapOf<Int, EpisodeList.Info>()
         private val aniListCache = mutableMapOf<Int, String>()
@@ -86,6 +88,21 @@ class AniListTrafficTest {
         EpisodeLoader.load(id, "Dragon Ball Super: Beerus", api)
         assertEquals(2, api.n("kitsu"))
         assertEquals(0, api.n("anilist"))
+    }
+
+    @Test
+    fun entryMissingFromAniZipFindsAniListThroughKitsuMapping() {
+        // new show: ani.zip answers 404 for the kitsu id and kitsu's episodes carry no dates
+        val id = ShowUrl.Id.Kitsu(50021)
+        val api = Api(mapOf(id to null), aniList = mapOf(185660 to kusuriyaAniList), kitsuAniList = mapOf(50021 to 185660))
+        assertEquals(5, EpisodeLoader.load(id, "Kusuriya no Hitorigoto 3rd Season", api).size)
+    }
+
+    @Test
+    fun kitsuMappingsGiveTheAniListId() {
+        val body = """{"data":[{"attributes":{"externalSite":"myanimelist/anime","externalId":"63045"}},{"attributes":{"externalSite":"anilist/anime","externalId":"203275"}}]}"""
+        assertEquals(203275, Kitsu.parseAniListId(body))
+        assertEquals(null, Kitsu.parseAniListId("""{"data":[]}"""))
     }
 
     @Test

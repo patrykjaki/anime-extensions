@@ -233,6 +233,7 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         override fun kitsuEpisodes(kitsuId: Int, page: Int) = kitsu(Kitsu.episodesUrl(kitsuId, page), Kitsu::parseEpisodes)
         override fun aniListMedia(aniListId: Int) =
             aniListBody(AniListCache.mediaKey(aniListId), aniListRequest(DETAILS_QUERY, JSONObject().put("id", aniListId)))
+        override fun kitsuAniListId(kitsuId: Int) = kitsu(Kitsu.mappingsUrl(kitsuId), Kitsu::parseAniListId)
         override fun cachedAniList(aniListId: Int) = AniListCache.get(AniListCache.mediaKey(aniListId))
         override fun cachedKitsu(kitsuId: Int) = KitsuCache.info.get(kitsuId.toString())
             ?: KitsuCache.bodies.get(Kitsu.detailsUrl(kitsuId))?.let(Kitsu::parseSingle)?.let { EpisodeList.Info(it.titles, null) }
@@ -303,7 +304,8 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
         var picks = resolve(Selection.candidates(toshoRows, ep), ep)
 
         if (picks.isEmpty() && ep.query.isNotBlank()) {
-            val q = Text.urlEncode("${ep.query} ${ep.anidbEp.toString().padStart(2, '0')}")
+            // apostrophes out: release names write "Demons' Crest" as "Demons Crest" as often as not
+            val q = Text.urlEncode("${ep.query.replace(Regex("['’`]"), "")} ${ep.anidbEp.toString().padStart(2, '0')}")
             val nyaaRows = withContext(Dispatchers.IO) {
                 runCatching { NyaaParser.parse(getText("$NYAA_URL/?page=rss&c=1_0&f=0&q=$q")) }.getOrDefault(emptyList())
             }

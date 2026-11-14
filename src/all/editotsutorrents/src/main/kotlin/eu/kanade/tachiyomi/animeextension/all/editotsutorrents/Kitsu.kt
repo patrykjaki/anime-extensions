@@ -20,6 +20,17 @@ object Kitsu {
     fun airingUrl(page: Int) = "$API/anime?filter%5Bstatus%5D=current&sort=-userCount&${pageParams(page)}"
     fun searchUrl(page: Int, query: String) = "$API/anime?filter%5Btext%5D=${Text.urlEncode(query)}&${pageParams(page)}"
     fun detailsUrl(id: Int) = "$API/anime/$id?include=categories&fields%5Bcategories%5D=title"
+    fun mappingsUrl(id: Int) = "$API/anime/$id/mappings?page%5Blimit%5D=$PAGE_SIZE&fields%5Bmappings%5D=externalSite,externalId"
+
+    /** the AniList id among an entry's mappings, null when kitsu lists none */
+    fun parseAniListId(body: String): Int? {
+        val data = JSONObject(body).optJSONArray("data") ?: return null
+        return (0 until data.length()).firstNotNullOfOrNull { i ->
+            val a = data.optJSONObject(i)?.optJSONObject("attributes") ?: return@firstNotNullOfOrNull null
+            a.optString("externalId").toIntOrNull()?.takeIf { a.optString("externalSite") == "anilist/anime" }
+        }
+    }
+
     fun episodesUrl(id: Int, page: Int) =
         "$API/anime/$id/episodes?sort=number&page%5Blimit%5D=$PAGE_SIZE&page%5Boffset%5D=${(page - 1) * PAGE_SIZE}&fields%5Bepisodes%5D=number,airdate"
 

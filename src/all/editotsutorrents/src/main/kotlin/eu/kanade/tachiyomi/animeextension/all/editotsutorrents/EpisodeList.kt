@@ -53,6 +53,9 @@ interface EpisodeApi {
     /** AniList Media(id) body */
     fun aniListMedia(aniListId: Int): String
 
+    /** the AniList id kitsu maps the entry to, for entries ani.zip doesn't know; null when it has none */
+    fun kitsuAniListId(kitsuId: Int): Int? = null
+
     /** in-memory answers from earlier calls, without a request */
     fun cachedAniList(aniListId: Int): String? = null
     fun cachedKitsu(kitsuId: Int): EpisodeList.Info? = null
@@ -75,8 +78,11 @@ object EpisodeLoader {
                 val info = if (k != null && (!needCount || k.airedCount != null)) {
                     k
                 } else {
-                    zip?.let(AniZip::aniListId)?.let { aniListInfo(api, it) }
-                        ?.let { a -> if (k != null) a.copy(titles = k.titles) else a } ?: k
+                    // ani.zip names the AniList entry; for a show it doesn't have yet, kitsu's own mapping does
+                    (zip?.let(AniZip::aniListId) ?: runCatching { api.kitsuAniListId(id.id) }.getOrNull())
+                        ?.let { aniListInfo(api, it) }
+                        // AniList's romaji first: it is what release names use, kitsu's can differ by a letter
+                        ?.let { a -> if (k != null) a.copy(titles = (a.titles + k.titles).distinct()) else a } ?: k
                 }
                 info?.also { if (it.airedCount != null || !needCount) api.rememberKitsu(id.id, it) }
             }
