@@ -321,10 +321,8 @@ class EditotsuTorrents : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
-        val episodes = EpisodeLoader.load(showId(anime), anime.title, episodeApi)
         val now = System.currentTimeMillis()
-        episodes
-            .filter { (it.airDateMillis ?: 0L) <= now }
+        EpisodeLoader.released(showId(anime), anime.title, episodeApi, now)
             .sortedByDescending { it.ref.anidbEp }
             .map { e ->
                 SEpisode.create().apply {

@@ -67,8 +67,7 @@ interface EpisodeApi {
 object EpisodeLoader {
     private const val KITSU_EPISODE_PAGES = 5
 
-    fun load(id: ShowUrl.Id, title: String, api: EpisodeApi): List<AniZip.Episode> {
-        val zip = api.aniZip(id)
+    fun load(id: ShowUrl.Id, title: String, api: EpisodeApi, zip: String? = api.aniZip(id)): List<AniZip.Episode> {
         return when (id) {
             is ShowUrl.Id.AniList -> {
                 val cached = api.cachedAniList(id.id)?.let(EpisodeList::fromAniList)
@@ -89,6 +88,64 @@ object EpisodeLoader {
                 info?.also { if (it.airedCount != null || !needCount) api.rememberKitsu(id.id, it) }
             }
         }
+    }
+
+    private const val AIRING_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+
+    /**
+     * The episodes that are out, for the list. ani.zip (AniDB) lags behind a show that is airing:
+     * the newest episode can be missing, or listed with a planned date later than its actual
+     * release. For a show that looks like it is airing, AniList's aired count (the episode
+     * before its next airing) decides: those episodes show even when their date is still ahead,
+     * and aired ones ani.zip doesn't list yet are added, searched by number.
+     * AniList is asked only for such shows, through the same cache as the rest.
+     */
+    fun released(id: ShowUrl.Id, title: String, api: EpisodeApi, now: Long): List<AniZip.Episode> {
+        val zip = api.aniZip(id)
+        val episodes = load(id, title, api, zip)
+        val out = episodes.filter { (it.airDateMillis ?: 0L) <= now }
+        if (episodes.isEmpty() || episodes.first().ref.aid == NoAniDb.AID || !looksAiring(episodes, now)) return out
+        val aired = airedCount(id, zip, api) ?: return out
+        return withAired(episodes, aired, now)
+    }
+
+    /** an episode dated ahead, or the last one dated within the past two weeks */
+    internal fun looksAiring(episodes: List<AniZip.Episode>, now: Long): Boolean {
+        if (episodes.any { (it.airDateMillis ?: 0L) > now }) return true
+        val last = episodes.maxByOrNull { it.ref.anidbEp }?.airDateMillis ?: return false
+        return now - last <= AIRING_WINDOW_MS
+    }
+
+    /** [episodes] that are out by date or by [aired], plus aired numbers the list lacks */
+    internal fun withAired(episodes: List<AniZip.Episode>, aired: Int, now: Long): List<AniZip.Episode> {
+        val out = episodes.filter { (it.airDateMillis ?: 0L) <= now || it.ref.anidbEp <= aired }
+        val last = episodes.maxByOrNull { it.ref.anidbEp } ?: return out
+        val missing = (last.ref.anidbEp + 1..aired).map { n ->
+            val step = n - last.ref.anidbEp
+            AniZip.Episode(
+                ref = last.ref.copy(
+                    eid = null,
+                    anidbEp = n,
+                    seasonEp = last.ref.seasonEp?.plus(step),
+                    absolute = last.ref.absolute?.plus(step),
+                ),
+                title = null, airDateMillis = null, image = null, overview = null,
+            )
+        }
+        return out + missing
+    }
+
+    private fun airedCount(id: ShowUrl.Id, zip: String?, api: EpisodeApi): Int? {
+        val aniListId = when (id) {
+            is ShowUrl.Id.AniList -> id.id
+            is ShowUrl.Id.Kitsu -> zip?.let(AniZip::aniListId)
+                ?: runCatching { api.kitsuAniListId(id.id) }.getOrNull()
+        } ?: return null
+        val body = api.cachedAniList(aniListId) ?: runCatching { api.aniListMedia(aniListId) }.getOrNull() ?: return null
+        val m = runCatching { org.json.JSONObject(body).optJSONObject("data")?.optJSONObject("Media") }.getOrNull()
+        // only a show AniList knows the next airing of (or has finished) gives a usable count
+        if (m == null || (m.optJSONObject("nextAiringEpisode") == null && m.optString("status") != "FINISHED")) return null
+        return NoAniDb.airedCount(body).takeIf { it > 0 }
     }
 
     private fun aniListInfo(api: EpisodeApi, aniListId: Int): EpisodeList.Info? =
